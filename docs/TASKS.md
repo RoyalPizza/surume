@@ -40,7 +40,7 @@ Nothing queued. Pick from the v1 features and bugs below.
 
 ### App (`main.cpp`, `persistence.cpp`)
 
-- [ ] A1 **Settings aren't saved for non-ASCII Windows usernames.** `fopen_s` and `toml_parse_file_ex` take ANSI paths. Use wide-char file APIs.
+- [x] A1 **Settings aren't saved for non-ASCII Windows usernames.** `fopen_s` and `toml_parse_file_ex` take ANSI paths. Use wide-char file APIs.
 - [x] A2 **Likely spins the CPU while minimized.** `Present(1, 0)` returns immediately when occluded; check for `DXGI_STATUS_OCCLUDED` and sleep, like the ImGui example does.
 - [x] A3 **`window_shutdown` destroys an already-destroyed window** (harmless, but wrong).
 - [x] A4 **`imgui.ini` is written to the working directory.** The app owns its layout, so set `io.IniFilename = nullptr` and drop the `.gitignore` entry.
@@ -81,7 +81,7 @@ Nothing queued. Pick from the v1 features and bugs below.
 - [ ] I2 Load a TTF font with wider glyph coverage so non-ASCII file names don't render as `?`.
 - [x] I3 Add `/utf-8` to `build.bat`; `gui.cpp` contains UTF-8 characters.
 - [ ] I4 Only redraw when something changes instead of rendering at 60 fps while idle.
-- [ ] I5 Save settings when they change, not only on a clean exit.
+- [x] I5 Save settings when they change, not only on a clean exit.
 - [ ] I6 Stop the GUI calling Git directly; route actions through request flags handled in `main.cpp`, like Open Repository. Part of F12.
 - [x] I7 Clean up `.gitignore`: drop the leftover CMake, Visual Studio project, compiler output and `*.log` entries.
 - [x] I8 Add a `compile_flags.txt` so clangd in VS Code finds the ImGui and tomlc17 headers.

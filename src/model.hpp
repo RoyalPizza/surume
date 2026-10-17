@@ -82,6 +82,7 @@ struct AppState
     // Requests from the GUI, handled in main.cpp after the frame is presented
     bool is_open_repo_requested = false;
     bool is_exit_requested = false;
+    bool is_save_requested = false; // settings or recent repos changed
     bool is_open_in_explorer_requested = false;
     bool is_open_in_terminal_requested = false;
     bool is_diff_requested = false;

@@ -197,6 +197,7 @@ static void render_settings_modal(AppState& state)
         state.settings.default_open_directory = settings_open_directory;
         state.settings.is_auto_fetch_enabled = settings_is_auto_fetch_enabled;
         state.settings.auto_fetch_interval_minutes = settings_auto_fetch_minutes;
+        state.is_save_requested = true;
         is_settings_loaded = false;
         ImGui::CloseCurrentPopup();
     }
@@ -1083,6 +1084,10 @@ static void render_splitter(AppState& state, float height)
     {
         state.left_column_width = std::clamp(state.left_column_width + delta,
             MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH);
+    }
+    if (ImGui::IsItemDeactivated())
+    {
+        state.is_save_requested = true;
     }
     if (is_active || is_hovered)
     {

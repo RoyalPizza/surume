@@ -468,6 +468,7 @@ static bool open_repo(AppState& state, const std::string& path)
         std::remove(state.recent_repos.begin(), state.recent_repos.end(), root),
         state.recent_repos.end());
     state.recent_repos.insert(state.recent_repos.begin(), root);
+    state.is_save_requested = true;
     state.status_message.clear();
     git_refresh_repo_state(state);
 
@@ -517,7 +518,7 @@ static void load_selected_diff(AppState& state)
 
 // Handle requests the GUI left in state. Runs after present so blocking work (dialogs, git
 // calls) doesn't stall a half-drawn frame.
-static void handle_requests(AppState& state, Window& window)
+static void handle_requests(AppState& state, Window& window, const std::string& app_data_dir)
 {
     if (state.is_open_repo_requested)
     {
@@ -562,6 +563,16 @@ static void handle_requests(AppState& state, Window& window)
             state.status_message = "Repository no longer available: " + path;
         }
     }
+
+    // Last, so changes made by the requests above are included
+    if (state.is_save_requested)
+    {
+        state.is_save_requested = false;
+        if (!persistence_save(state, app_data_dir))
+        {
+            state.status_message = "Could not save settings to " + app_data_dir;
+        }
+    }
 }
 
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
@@ -599,7 +610,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         begin_frame();
         gui_render(state);
         present(main_window);
-        handle_requests(state, main_window);
+        handle_requests(state, main_window, app_data_dir);
 
         ++frame_count;
         if (frame_count % HEARTBEAT_FRAMES == 0)

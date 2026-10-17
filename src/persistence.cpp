@@ -3,8 +3,47 @@
 #include "log.hpp"
 #include "tomlc17.h"
 
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+
 #include <cstdio>
 #include <string>
+
+constexpr int WIDE_PATH_SIZE = MAX_PATH * 2;
+
+// Open a file by UTF-8 path. The narrow CRT functions use the ANSI code page, which breaks
+// on user folders with non-ASCII names. Returns nullptr on failure.
+static FILE* open_file(const std::string& path, const wchar_t* mode)
+{
+    wchar_t wide_path[WIDE_PATH_SIZE] = {};
+    if (MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, wide_path, WIDE_PATH_SIZE) == 0)
+    {
+        return nullptr;
+    }
+
+    FILE* file = nullptr;
+    if (_wfopen_s(&file, wide_path, mode) != 0)
+    {
+        return nullptr;
+    }
+    return file;
+}
+
+// Parse a TOML file. Returns false if it is missing or invalid; toml must still be freed.
+static bool parse_toml_file(const std::string& path, toml_result_t& toml)
+{
+    FILE* file = open_file(path, L"rb");
+    if (file == nullptr)
+    {
+        toml = {};
+        return false;
+    }
+
+    toml = toml_parse_file(file);
+    fclose(file);
+    return toml.ok;
+}
 
 static std::string escape_toml(const std::string& text)
 {
@@ -29,8 +68,8 @@ static std::string escape_toml(const std::string& text)
 
 static void load_repositories(AppState& state, const std::string& path)
 {
-    toml_result_t toml = toml_parse_file_ex(path.c_str());
-    if (!toml.ok)
+    toml_result_t toml;
+    if (!parse_toml_file(path, toml))
     {
         LOG_DEBUG("persistence: repositories.toml not found or invalid (first run?)");
         toml_free(toml);
@@ -62,8 +101,8 @@ static void load_repositories(AppState& state, const std::string& path)
 
 static void load_settings(AppState& state, const std::string& path)
 {
-    toml_result_t toml = toml_parse_file_ex(path.c_str());
-    if (!toml.ok)
+    toml_result_t toml;
+    if (!parse_toml_file(path, toml))
     {
         LOG_DEBUG("persistence: settings.toml not found or invalid (first run?)");
         toml_free(toml);
@@ -106,8 +145,8 @@ static void load_settings(AppState& state, const std::string& path)
 
 static bool save_repositories(const AppState& state, const std::string& path)
 {
-    FILE* file = nullptr;
-    if (fopen_s(&file, path.c_str(), "w") != 0 || file == nullptr)
+    FILE* file = open_file(path, L"w");
+    if (file == nullptr)
     {
         LOG_ERROR("persistence: failed to open repositories.toml for writing");
         return false;
@@ -126,8 +165,8 @@ static bool save_repositories(const AppState& state, const std::string& path)
 
 static bool save_settings(const AppState& state, const std::string& path)
 {
-    FILE* file = nullptr;
-    if (fopen_s(&file, path.c_str(), "w") != 0 || file == nullptr)
+    FILE* file = open_file(path, L"w");
+    if (file == nullptr)
     {
         LOG_ERROR("persistence: failed to open settings.toml for writing");
         return false;
