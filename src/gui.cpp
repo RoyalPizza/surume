@@ -432,6 +432,11 @@ static void render_view_menu(AppState& state)
     {
         state.nav_mode = NavMode::HISTORY;
     }
+    ImGui::Separator();
+    if (ImGui::MenuItem("Refresh", "F5", false, !state.active_repo.empty()))
+    {
+        request(state, RequestKind::REFRESH);
+    }
     ImGui::EndMenu();
 }
 
@@ -1140,6 +1145,11 @@ void gui_render(AppState& state)
         LOG_INFO("gui_render: first frame, display=%.0fx%.0f",
             ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y);
         is_first_frame = false;
+    }
+
+    if (ImGui::IsKeyPressed(ImGuiKey_F5, false) && !state.active_repo.empty())
+    {
+        request(state, RequestKind::REFRESH);
     }
 
     open_requested_modals(state);

@@ -55,6 +55,7 @@ struct Window
     int height = INITIAL_HEIGHT;
     bool is_quit_requested = false;
     bool is_occluded = false; // minimized or fully covered; skip rendering
+    bool was_activated = false; // the app regained focus; the repository may have changed
     bool has_pending_resize = false;
     int pending_width = 0;
     int pending_height = 0;
@@ -135,6 +136,13 @@ static LRESULT WINAPI window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
             if ((wparam & 0xfff0) == SC_KEYMENU)
             {
                 return 0;
+            }
+            break;
+
+        case WM_ACTIVATEAPP:
+            if (wparam)
+            {
+                main_window.was_activated = true;
             }
             break;
 
@@ -913,6 +921,12 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
             continue;
         }
 
+        if (main_window.was_activated)
+        {
+            // Files may have changed in an editor or terminal while we were in the background
+            main_window.was_activated = false;
+            push_request(state, RequestKind::REFRESH);
+        }
         apply_results(state);
         handle_dpi_change(main_window);
         handle_resize(main_window);
