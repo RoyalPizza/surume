@@ -36,7 +36,7 @@ if "%1"=="release" (
     set LINKCFG=/DEBUG
 )
 
-set COMMON=/nologo /c /MP /EHsc %CFG% %DEFINES% %INCLUDES% /Fo:%OBJ%\ /Fd:%OBJ%\
+set COMMON=/nologo /c /MP /EHsc /utf-8 %CFG% %DEFINES% %INCLUDES% /Fo:%OBJ%\ /Fd:%OBJ%\
 
 rem Third-party code: no warnings, we don't own it
 cl %COMMON% /std:c++20 /W0 ^

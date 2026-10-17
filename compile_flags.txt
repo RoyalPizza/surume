@@ -1,0 +1,9 @@
+--target=x86_64-pc-windows-msvc
+-std=c++20
+-Isrc
+-Ithird-party/imgui
+-Ithird-party/imgui/backends
+-Ithird-party/tomlc17/src
+-DUNICODE
+-D_UNICODE
+-DSURUME_DEBUG

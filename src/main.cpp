@@ -200,7 +200,9 @@ static bool window_init(Window& window, const wchar_t* title)
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
-    ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.IniFilename = nullptr; // layout is app-owned and persisted in settings.toml
     ImGui::StyleColorsDark();
     if (!ImGui_ImplWin32_Init(window.hwnd) ||
         !ImGui_ImplDX11_Init(window.device, window.device_context))

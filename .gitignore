@@ -2,28 +2,10 @@
 bin/
 obj/
 
-# MSVC / Visual Studio
+# Editors
 .vs/
-*.user
-*.suo
-*.sln
-*.vcxproj
-*.vcxproj.filters
-*.vcxproj.user
-
-# Compiler output
-*.pdb
-*.ilk
-*.exp
-*.lib
-*.obj
-
-# ImGui saved layout
-imgui.ini
-
-# Logs
-*.log
+.vscode/
+.cache/
 
 # OS
 Thumbs.db
-.DS_Store
