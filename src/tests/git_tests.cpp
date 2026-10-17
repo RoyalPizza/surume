@@ -306,6 +306,51 @@ static void test_conflict(const std::string& root)
     check(conflicted != nullptr && conflicted->is_conflicted, "conflicted file is marked");
 }
 
+static void test_commit_paths(const std::string& root)
+{
+    std::string repo = create_repo(root, "commit paths");
+    GitResult result;
+
+    // First commit in a repository with no HEAD yet, with only one of two new files
+    write_file(repo + "\\a.txt", "a\n");
+    write_file(repo + "\\b.txt", "b\n");
+    check(git_commit_paths(repo, { "a.txt" }, "first", "", result), "first commit with no HEAD");
+    std::vector<FileStatus> files;
+    git_get_status(repo, files);
+    check(files.size() == 1 && files[0].path == "b.txt" && files[0].index_status == '?',
+        "unticked new file stays untracked");
+
+    run(repo, { "add", "b.txt" });
+    run(repo, { "commit", "-q", "-m", "add b" });
+    write_file(repo + "\\c.txt", "c\n");
+    run(repo, { "add", "c.txt" });
+    run(repo, { "commit", "-q", "-m", "add c" });
+
+    // Modify a, delete b, rename c to d; stage a from the "command line"
+    write_file(repo + "\\a.txt", "a2\n");
+    run(repo, { "add", "a.txt" });
+    run(repo, { "rm", "-q", "b.txt" });
+    run(repo, { "mv", "c.txt", "d.txt" });
+
+    // Tick the deletion and the rename (both sides) but not a.txt
+    check(git_commit_paths(repo, { "b.txt", "d.txt", "c.txt" }, "delete and rename", "", result),
+        "commit a deletion and a rename");
+    git_get_status(repo, files);
+    const FileStatus* modified = find_file(files, "a.txt");
+    check(files.size() == 1 && modified != nullptr && modified->index_status == ' ' &&
+        modified->worktree_status == 'M', "outside staging replaced: a.txt left unstaged");
+
+    git_run(repo, { "show", "--name-status", "--format=", "HEAD" }, result);
+    check(result.output.find("D\tb.txt") != std::string::npos &&
+        result.output.find("R100\tc.txt\td.txt") != std::string::npos,
+        "commit has the deletion and the rename");
+
+    // Nothing ticked: the commit fails with git's reason on stdout
+    check(!git_commit_paths(repo, {}, "empty", "", result) &&
+        git_error_text(result).find("no changes added") != std::string::npos,
+        "empty selection fails with git's reason (from stdout)");
+}
+
 static void test_persistence(const std::string& root)
 {
     std::string dir = root + "\\app data \xC3\xBC\\"; // "ü"
@@ -359,6 +404,7 @@ int main()
     test_branches_and_log(root);
     test_ahead_behind(root);
     test_conflict(root);
+    test_commit_paths(root);
     test_persistence(root);
 
     delete_tree(root);

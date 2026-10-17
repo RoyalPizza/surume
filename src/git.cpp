@@ -461,6 +461,74 @@ bool git_commit(const std::string& repo_path, const std::string& summary,
     return git_run(repo_path, args, result);
 }
 
+// Write paths NUL-separated to a new temp file for --pathspec-from-file, which avoids the
+// 32 KB command-line limit. Returns false if the file couldn't be written.
+static bool write_pathspec_file(const std::vector<std::string>& paths, std::string& file_path)
+{
+    wchar_t temp_dir[MAX_PATH] = {};
+    wchar_t temp_file[MAX_PATH] = {};
+    if (GetTempPathW(MAX_PATH, temp_dir) == 0 ||
+        GetTempFileNameW(temp_dir, L"sur", 0, temp_file) == 0)
+    {
+        return false;
+    }
+
+    FILE* file = nullptr;
+    if (_wfopen_s(&file, temp_file, L"wb") != 0 || file == nullptr)
+    {
+        return false;
+    }
+    for (const std::string& path : paths)
+    {
+        fwrite(path.c_str(), 1, path.size() + 1, file); // includes the NUL
+    }
+    fclose(file);
+    file_path = to_utf8(temp_file);
+    return true;
+}
+
+static void delete_file(const std::string& path)
+{
+    DeleteFileW(to_wide(path).data());
+}
+
+bool git_commit_paths(const std::string& repo_path, const std::vector<std::string>& paths,
+    const std::string& summary, const std::string& description, GitResult& result)
+{
+    // Index back to HEAD, or empty for a repository with no commits yet
+    if (git_run(repo_path, { "rev-parse", "--verify", "-q", "HEAD" }, result))
+    {
+        if (!git_run(repo_path, { "reset", "-q" }, result))
+        {
+            return false;
+        }
+    }
+    else if (!git_run(repo_path, { "read-tree", "--empty" }, result))
+    {
+        return false;
+    }
+
+    if (!paths.empty())
+    {
+        std::string pathspec_file;
+        if (!write_pathspec_file(paths, pathspec_file))
+        {
+            result = {};
+            result.error_output = "Could not write the list of files to commit.";
+            return false;
+        }
+        bool is_added = git_run(repo_path, { "--literal-pathspecs", "add", "-A",
+            "--pathspec-from-file=" + pathspec_file, "--pathspec-file-nul" }, result);
+        delete_file(pathspec_file);
+        if (!is_added)
+        {
+            return false;
+        }
+    }
+
+    return git_commit(repo_path, summary, description, result);
+}
+
 bool git_get_log(const std::string& repo_path, std::vector<CommitInfo>& commits)
 {
     commits.clear();

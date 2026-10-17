@@ -3,6 +3,7 @@
 #include "model.hpp"
 
 #include <string>
+#include <vector>
 
 // Git work that runs on the worker thread. Mutating kinds end with a fresh snapshot.
 enum class JobKind
@@ -11,7 +12,7 @@ enum class JobKind
     OPEN_REPO,       // text: path to validate and load; text2: message if it isn't a repo
     REFRESH,
     LOAD_DIFF,       // file: the file to diff
-    COMMIT,          // text: summary, text2: description
+    COMMIT,          // paths: files to commit, text: summary, text2: description
     CHECKOUT_BRANCH, // text: branch name, flag: is a remote branch
     CREATE_BRANCH,   // text: branch name
     DELETE_BRANCH,   // text: branch name
@@ -26,6 +27,7 @@ struct Job
     std::string text2;
     bool flag = false;
     FileStatus file;
+    std::vector<std::string> paths;
 };
 
 struct JobResult

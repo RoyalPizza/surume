@@ -32,10 +32,10 @@ Nothing queued. Pick from the v1 features and bugs below.
 
 - [x] U1 **View > Changes / History does nothing.** It sets `state.nav_mode`, but the tab bar never reads it.
 - [x] U2 **File > Exit does nothing.**
-- [ ] U3 **Commit button is enabled when nothing is staged.**
+- [x] U3 **Commit button is enabled when nothing is staged.**
 - [x] U4 **Missing Git isn't handled.** `is_git_found` is never checked by the GUI: no error is shown and repo actions stay enabled.
 - [ ] U5 **Large diffs are slow.** `render_diff` draws every line every frame; use `ImGuiListClipper`.
-- [ ] U6 **Commit text carries across repo switches**, and the 1024-byte description buffer truncates silently.
+- [x] U6 **Commit text carries across repo switches**, and the 1024-byte description buffer truncates silently.
 - [x] U7 **Long relative dates** ("2 years, 3 months ago") overlap the hash in History.
 
 ### App (`main.cpp`, `persistence.cpp`)
@@ -47,7 +47,7 @@ Nothing queued. Pick from the v1 features and bugs below.
 
 ## Features: v1
 
-- [ ] F1 **Checkbox commit selection.** A checkbox per file plus tick-all; new changes ticked by default; ticks kept per path across refreshes; already-staged files load ticked. Commit resets the index, stages the ticked files, then commits. See DESIGN.md, Review and Commit Changes.
+- [x] F1 **Checkbox commit selection.** A checkbox per file plus tick-all; new changes ticked by default; ticks kept per path across refreshes; already-staged files load ticked. Commit resets the index, stages the ticked files, then commits. See DESIGN.md, Review and Commit Changes.
 - [ ] F2 Sync button: fetch, pull, push, publish branch.
 - [x] F3 Ahead/behind counts. Switch status to `git status --porcelain=v2 -z --branch` to get status, upstream and ahead/behind in one process launch.
 - [ ] F4 Auto-fetch (settings exist but are unused).

@@ -130,7 +130,8 @@ static void run_job(const Job& job, JobResult& result)
 
         case JobKind::COMMIT:
         {
-            bool is_success = git_commit(job.repo_path, job.text, job.text2, git_result);
+            bool is_success = git_commit_paths(job.repo_path, job.paths, job.text, job.text2,
+                git_result);
             finish_mutation(job, is_success, git_result, result);
             break;
         }

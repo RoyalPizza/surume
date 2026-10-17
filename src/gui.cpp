@@ -2,6 +2,7 @@
 
 #include "log.hpp"
 #include "imgui.h"
+#include "imgui_internal.h" // ImGuiItemFlags_MixedValue
 
 #include <algorithm>
 #include <cfloat>
@@ -47,8 +48,6 @@ constexpr float DELETE_LIST_MAX_HEIGHT = 150.0f;
 // Text buffers
 constexpr int PICKER_LABEL_SIZE = 160;
 constexpr int COMMIT_LABEL_SIZE = 128;
-constexpr int COMMIT_SUMMARY_SIZE = 256;
-constexpr int COMMIT_DESCRIPTION_SIZE = 1024;
 constexpr int BRANCH_NAME_SIZE = 128;
 constexpr int SETTINGS_PATH_SIZE = 512;
 
@@ -94,8 +93,6 @@ struct FileBadge
 
 // Single GUI instance: widget text and selections that live across frames
 static float ui_scale = 1.0f; // DPI scale for this frame, from the style
-static char commit_summary[COMMIT_SUMMARY_SIZE] = {};
-static char commit_description[COMMIT_DESCRIPTION_SIZE] = {};
 static char new_branch_name[BRANCH_NAME_SIZE] = {};
 static int delete_branch_selection = -1;
 static char settings_git_path[SETTINGS_PATH_SIZE] = {};
@@ -775,17 +772,55 @@ static FileBadge file_badge(const FileStatus& file)
     return badge;
 }
 
-static void render_file_row(AppState& state, int index, float badge_width, float row_width)
+static bool is_ticked(const AppState& state, const FileStatus& file)
+{
+    return state.unticked_paths.count(file.path) == 0;
+}
+
+static int count_ticked(const AppState& state)
+{
+    int count = 0;
+    for (const FileStatus& file : state.repo.files)
+    {
+        count += is_ticked(state, file) ? 1 : 0;
+    }
+    return count;
+}
+
+// x positions of the badge and the path, after the checkbox
+struct FileRowLayout
+{
+    float badge_x = 0.0f;
+    float path_x = 0.0f;
+    float path_width = 0.0f;
+};
+
+static void render_file_row(AppState& state, int index, const FileRowLayout& layout)
 {
     const FileStatus& file = state.repo.files[index];
-    FileBadge badge = file_badge(file);
 
+    bool ticked = is_ticked(state, file);
+    if (ImGui::Checkbox("##tick", &ticked))
+    {
+        if (ticked)
+        {
+            state.unticked_paths.erase(file.path);
+        }
+        else
+        {
+            state.unticked_paths[file.path] = true;
+        }
+    }
+
+    FileBadge badge = file_badge(file);
+    ImGui::SameLine(layout.badge_x);
+    ImGui::AlignTextToFramePadding();
     ImGui::TextColored(badge.color, "%c", badge.letter);
     if (ImGui::IsItemHovered())
     {
         ImGui::SetTooltip("%s", badge.tooltip);
     }
-    ImGui::SameLine(badge_width);
+    ImGui::SameLine(layout.path_x);
 
     std::string display_path = file.path;
     if (!display_path.empty() && (display_path.back() == '/' || display_path.back() == '\\'))
@@ -794,8 +829,9 @@ static void render_file_row(AppState& state, int index, float badge_width, float
     }
 
     bool is_selected = state.selected_file_path == file.path;
-    if (ImGui::Selectable(display_path.c_str(), is_selected,
-        ImGuiSelectableFlags_SpanAllColumns, ImVec2(row_width, 0)) && !is_selected)
+    ImVec2 row_size = ImVec2(layout.path_width, ImGui::GetFrameHeight());
+    if (ImGui::Selectable(display_path.c_str(), is_selected, ImGuiSelectableFlags_None,
+        row_size) && !is_selected)
     {
         state.selected_file_path = file.path;
         state.current_diff.clear();
@@ -805,6 +841,33 @@ static void render_file_row(AppState& state, int index, float badge_width, float
     {
         ImGui::SetTooltip("Renamed from: %s", file.old_path.c_str());
     }
+}
+
+// Tick-all checkbox (mixed when only some files are ticked) and the file count.
+static void render_tick_all(AppState& state)
+{
+    int total = (int)state.repo.files.size();
+    int ticked = count_ticked(state);
+    bool is_mixed = ticked > 0 && ticked < total;
+    bool is_all = ticked == total;
+
+    ImGui::PushItemFlag(ImGuiItemFlags_MixedValue, is_mixed);
+    if (ImGui::Checkbox("##tickall", &is_all))
+    {
+        state.unticked_paths.clear();
+        if (!is_all)
+        {
+            for (const FileStatus& file : state.repo.files)
+            {
+                state.unticked_paths[file.path] = true;
+            }
+        }
+    }
+    ImGui::PopItemFlag();
+    ImGui::SameLine();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextDisabled("%d changed file%s", total, total == 1 ? "" : "s");
+    ImGui::Separator();
 }
 
 // Conflicts block normal work until resolved, so say so above the list.
@@ -837,26 +900,26 @@ static void render_file_list(AppState& state)
     }
     render_conflict_banner(state);
 
+    render_tick_all(state);
+
     const ImGuiStyle& style = ImGui::GetStyle();
-    float badge_width = ImGui::CalcTextSize("M").x + style.ItemSpacing.x * 3;
-    float row_width = ImGui::GetContentRegionAvail().x - badge_width - style.ItemSpacing.x;
+    FileRowLayout layout;
+    layout.badge_x = ImGui::GetCursorPosX() + ImGui::GetFrameHeight() + style.ItemSpacing.x;
+    layout.path_x = layout.badge_x + ImGui::CalcTextSize("M").x + style.ItemSpacing.x * 2;
+    layout.path_width = ImGui::GetContentRegionAvail().x - layout.path_x;
     for (int i = 0; i < (int)state.repo.files.size(); ++i)
     {
         ImGui::PushID(i);
-        render_file_row(state, i, badge_width, row_width);
+        render_file_row(state, i, layout);
         ImGui::PopID();
     }
 }
 
 static void commit(AppState& state)
 {
-    LOG_INFO("Commit: summary='%s' branch='%s'", commit_summary,
+    LOG_INFO("Commit: summary='%s' branch='%s'", state.commit_summary,
         state.repo.head.name.c_str());
-    Request commit_request;
-    commit_request.kind = RequestKind::COMMIT;
-    commit_request.text = commit_summary;
-    commit_request.text2 = commit_description;
-    state.requests.push_back(commit_request);
+    request(state, RequestKind::COMMIT);
 }
 
 static void render_commit_footer(AppState& state, float width)
@@ -866,31 +929,28 @@ static void render_commit_footer(AppState& state, float width)
     ImGui::BeginChild("##commitfooter", ImVec2(width, scaled(COMMIT_FOOTER_HEIGHT)), false,
         ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
-    if (state.has_commit_succeeded)
-    {
-        commit_summary[0] = '\0';
-        commit_description[0] = '\0';
-        state.has_commit_succeeded = false;
-    }
-
     bool has_repo = !state.active_repo.empty();
     float input_width = ImGui::GetContentRegionAvail().x;
     ImGui::BeginDisabled(!has_repo);
 
     ImGui::SetNextItemWidth(input_width);
     ImGui::InputTextWithHint("##summary", "Summary (required)",
-        commit_summary, sizeof(commit_summary));
+        state.commit_summary, sizeof(state.commit_summary));
     ImGui::Spacing();
-    ImGui::InputTextMultiline("##description", commit_description, sizeof(commit_description),
+    ImGui::InputTextMultiline("##description", state.commit_description,
+        sizeof(state.commit_description),
         ImVec2(input_width, scaled(COMMIT_DESCRIPTION_HEIGHT)));
     ImGui::Spacing();
 
-    bool can_commit = has_repo && commit_summary[0] != '\0' && !state.is_mutation_running;
+    int ticked = count_ticked(state);
+    bool can_commit = has_repo && ticked > 0 && state.commit_summary[0] != '\0' &&
+        !state.is_mutation_running;
     ImGui::BeginDisabled(!can_commit);
     char label[COMMIT_LABEL_SIZE];
     const std::string& current = state.repo.head.name;
     const char* branch = current.empty() ? "branch" : current.c_str();
-    snprintf(label, sizeof(label), "Commit to %s", branch);
+    snprintf(label, sizeof(label), "Commit %d file%s to %s", ticked, ticked == 1 ? "" : "s",
+        branch);
     if (ImGui::Button(label, ImVec2(input_width, 0)))
     {
         commit(state);

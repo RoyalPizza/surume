@@ -50,6 +50,12 @@ bool git_delete_branch(const std::string& repo_path, const std::string& name,
 bool git_commit(const std::string& repo_path, const std::string& summary,
     const std::string& description, GitResult& result);
 
+// Make the index hold exactly the working-tree state of paths (everything else as in HEAD),
+// then commit. Staging done outside Surume is replaced. Paths are literal, not globs; include
+// both sides of a rename. Returns false on failure; result holds the failing command's output.
+bool git_commit_paths(const std::string& repo_path, const std::vector<std::string>& paths,
+    const std::string& summary, const std::string& description, GitResult& result);
+
 // Read recent commits on the current branch, newest first. Returns false on error
 // (including a repository with no commits yet).
 bool git_get_log(const std::string& repo_path, std::vector<CommitInfo>& commits);

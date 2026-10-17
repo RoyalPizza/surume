@@ -1,7 +1,11 @@
 #pragma once
 
 #include <string>
+#include <unordered_map>
 #include <vector>
+
+constexpr int COMMIT_SUMMARY_SIZE = 256;
+constexpr int COMMIT_DESCRIPTION_SIZE = 16384;
 
 enum class NavMode
 {
@@ -78,7 +82,7 @@ enum class RequestKind
     OPEN_IN_TERMINAL,
     REFRESH,
     LOAD_DIFF,        // text: file path
-    COMMIT,           // text: summary, text2: description
+    COMMIT,           // uses the ticked files and commit text in AppState
     CHECKOUT_BRANCH,  // text: branch name, flag: is a remote branch
     CREATE_BRANCH,    // text: branch name
     DELETE_BRANCH,    // text: branch name
@@ -104,6 +108,11 @@ struct AppState
     std::string restore_repo; // last active repository from settings, until it reopens or fails
     RepoSnapshot repo;
 
+    // Next commit (written by the GUI; cleared on repository switch)
+    std::unordered_map<std::string, bool> unticked_paths; // files left out; new files start ticked
+    char commit_summary[COMMIT_SUMMARY_SIZE] = {};
+    char commit_description[COMMIT_DESCRIPTION_SIZE] = {};
+
     // View
     NavMode nav_mode = NavMode::CHANGES;
     std::string selected_file_path; // empty when no file is selected
@@ -114,7 +123,6 @@ struct AppState
     bool is_busy = false;            // a job is queued or running
     bool is_mutation_running = false; // a job that changes the repository is queued or running
     std::string busy_label;          // what the running job is doing, for the GUI
-    bool has_commit_succeeded = false; // set when a commit lands; the GUI clears its fields
 
     // Settings (persisted)
     AppSettings settings;

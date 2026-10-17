@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 // Deliberately not declared in imgui_impl_win32.h, to keep <windows.h> out of that header
@@ -619,9 +620,31 @@ static void queue_diff(const AppState& state)
 
 // Take a new snapshot. Keep the file selection if the file is still changed and reload its
 // diff, since the file may have changed too.
+// Forget unticks for files that are no longer changed, so a file that changes again later
+// starts ticked like any new change.
+static void prune_unticked(AppState& state)
+{
+    std::unordered_map<std::string, bool> kept;
+    for (const FileStatus& file : state.repo.files)
+    {
+        if (state.unticked_paths.count(file.path) != 0)
+        {
+            kept[file.path] = true;
+        }
+    }
+    state.unticked_paths.swap(kept);
+}
+
+static void clear_commit_text(AppState& state)
+{
+    state.commit_summary[0] = '\0';
+    state.commit_description[0] = '\0';
+}
+
 static void apply_snapshot(AppState& state, const RepoSnapshot& snapshot)
 {
     state.repo = snapshot;
+    prune_unticked(state);
     if (state.selected_file_path.empty())
     {
         return;
@@ -653,6 +676,8 @@ static void apply_open_repo(AppState& state, const JobResult& result)
     state.selected_file_path.clear();
     state.current_diff.clear();
     state.status_message.clear();
+    state.unticked_paths.clear();
+    clear_commit_text(state);
     state.repo = result.snapshot;
     push_request(state, RequestKind::SAVE_SETTINGS);
     LOG_INFO("open_repo: name='%s' branch='%s'", state.active_repo_name.c_str(),
@@ -750,7 +775,10 @@ static void apply_result(AppState& state, const JobResult& result)
     if (result.is_success)
     {
         state.status_message.clear();
-        state.has_commit_succeeded = result.kind == JobKind::COMMIT;
+        if (result.kind == JobKind::COMMIT)
+        {
+            clear_commit_text(state);
+        }
     }
     else
     {
@@ -780,6 +808,32 @@ static void queue_repo_job(const AppState& state, const Request& request, JobKin
     job.text = request.text;
     job.text2 = request.text2;
     job.flag = request.flag;
+    jobs_push(job);
+}
+
+// Commit the ticked files: both sides of a rename, so the old path's removal is included.
+static void queue_commit(const AppState& state)
+{
+    if (state.active_repo.empty())
+    {
+        return;
+    }
+
+    Job job = make_job(state, JobKind::COMMIT);
+    job.text = state.commit_summary;
+    job.text2 = state.commit_description;
+    for (const FileStatus& file : state.repo.files)
+    {
+        if (state.unticked_paths.count(file.path) != 0)
+        {
+            continue;
+        }
+        job.paths.push_back(file.path);
+        if (!file.old_path.empty())
+        {
+            job.paths.push_back(file.old_path);
+        }
+    }
     jobs_push(job);
 }
 
@@ -820,7 +874,7 @@ static void handle_request(AppState& state, const Request& request, Window& wind
             break;
 
         case RequestKind::COMMIT:
-            queue_repo_job(state, request, JobKind::COMMIT);
+            queue_commit(state);
             break;
 
         case RequestKind::CHECKOUT_BRANCH:
