@@ -61,6 +61,10 @@ bool git_get_status(const std::string& repo_path, std::vector<FileStatus>& files
 // Untracked files diff against an empty file. Returns false if git produced no diff.
 bool git_get_diff(const std::string& repo_path, const FileStatus& file, std::string& diff);
 
-// Reload branch, branches, status and log for state.active_repo and clear the file
-// selection. Lists are left empty for any query that fails.
-void git_refresh_repo_state(AppState& state);
+// Read branch, branches, status and log into snapshot. Returns false if the status query
+// fails (the repository is unusable); lists are left empty for any other query that fails.
+bool git_load_snapshot(const std::string& repo_path, RepoSnapshot& snapshot);
+
+// The message to show for a failed command: stderr, or stdout when stderr is empty (some
+// failures, like "nothing to commit", are reported on stdout). Trimmed.
+std::string git_error_text(const GitResult& result);

@@ -24,7 +24,7 @@ Nothing queued. Pick from the v1 features and bugs below.
 
 - [x] G1 **8.3 short paths and `subst` drives are rejected.** `git_get_repo_root` compares the chosen path to Git's long-form top-level path as text, so a path like `C:\Users\ROYALP~1\repo` fails. The folder picker returns long paths, so this only affects paths typed or restored from elsewhere. Normalize with `GetLongPathNameW` or `GetFinalPathNameByHandleW` first.
 - [ ] G2 **Diffs show only the staged part** of a file that has both staged and unstaged changes.
-- [ ] G3 **Commit failure shows an empty reason.** With nothing staged, Git writes "nothing to commit" to stdout, not stderr.
+- [x] G3 **Commit failure shows an empty reason.** With nothing staged, Git writes "nothing to commit" to stdout, not stderr.
 - [ ] G4 **Conflicts look like modifications.** Unmerged files (`UU`, `AA`, ...) get the yellow `M` badge. v1 minimum: a distinct conflicted badge and a message saying the merge must be finished in an editor or terminal.
 - [x] G5 **`checkout <name>` is ambiguous** if a branch and a file share a name. Use `git switch`.
 
@@ -58,7 +58,7 @@ Nothing queued. Pick from the v1 features and bugs below.
 - [ ] F9 Remove a repository from the recent list; repository health warnings.
 - [ ] F10 Binary and large-file diff placeholders.
 - [ ] F11 Settings that take effect: Git executable path, default open directory.
-- [ ] F12 **Background jobs.** One Win32 worker thread with a job queue, per ARCHITECTURE.md: plain-data jobs and results, stale results dropped by generation, coalesced refreshes, exclusive mutations, cancellable network jobs with no fixed timeout. Includes splitting `AppState` by writer (snapshot, selection, view, requests, settings) and moving the GUI's direct Git calls into jobs (absorbs I6).
+- [x] F12 **Background jobs.** One Win32 worker thread with a job queue, per ARCHITECTURE.md: plain-data jobs and results, stale results dropped by generation, coalesced refreshes, exclusive mutations, cancellable network jobs with no fixed timeout. Includes splitting `AppState` by writer (snapshot, selection, view, requests, settings) and moving the GUI's direct Git calls into jobs (absorbs I6).
 - [ ] F13 Keyboard shortcuts and context menus.
 - [x] F14 Tests: Git output parsing against a throwaway repo.
 - [ ] F15 **Partial commits.** Line and hunk checkboxes in the diff gutter; the file checkbox shows a mixed state. Commit builds a patch from the selected lines and applies it with `git apply --cached`.
@@ -82,7 +82,7 @@ Nothing queued. Pick from the v1 features and bugs below.
 - [x] I3 Add `/utf-8` to `build.bat`; `gui.cpp` contains UTF-8 characters.
 - [ ] I4 Only redraw when something changes instead of rendering at 60 fps while idle.
 - [x] I5 Save settings when they change, not only on a clean exit.
-- [ ] I6 Stop the GUI calling Git directly; route actions through request flags handled in `main.cpp`, like Open Repository. Part of F12.
+- [x] I6 Stop the GUI calling Git directly; route actions through request flags handled in `main.cpp`, like Open Repository. Part of F12.
 - [x] I7 Clean up `.gitignore`: drop the leftover CMake, Visual Studio project, compiler output and `*.log` entries.
 - [x] I8 Add a `compile_flags.txt` so clangd in VS Code finds the ImGui and tomlc17 headers.
 

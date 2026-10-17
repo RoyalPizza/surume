@@ -11,6 +11,7 @@
 #ifdef SURUME_DEBUG
 
 static FILE* log_file = nullptr;
+static SRWLOCK log_lock = SRWLOCK_INIT; // the UI thread and the jobs worker both log
 
 // Strip directories so log lines show "git.cpp" instead of the full build path.
 static const char* file_name_from_path(const char* path)
@@ -73,6 +74,7 @@ void log_write(const char* level, const char* file, int line, const char* format
 
     SYSTEMTIME time;
     GetLocalTime(&time);
+    AcquireSRWLockExclusive(&log_lock);
     fprintf(log_file, "[%02d:%02d:%02d.%03d] [%-5s] %s:%d: ",
         time.wHour, time.wMinute, time.wSecond, time.wMilliseconds,
         level, file_name_from_path(file), line);
@@ -84,6 +86,7 @@ void log_write(const char* level, const char* file, int line, const char* format
 
     fprintf(log_file, "\n");
     fflush(log_file);
+    ReleaseSRWLockExclusive(&log_lock);
 }
 
 #else

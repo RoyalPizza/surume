@@ -1,5 +1,6 @@
 #include "git.hpp"
 #include "gui.hpp"
+#include "jobs.hpp"
 #include "log.hpp"
 #include "model.hpp"
 #include "persistence.hpp"
@@ -555,127 +556,294 @@ static std::string get_app_data_dir()
 // App
 // -------------------------------------------------------------------------
 
-// Make path the active repository if it is a repo root: move it to the front of the recent
-// list and load its state. Returns false, leaving state unchanged, if path isn't a repo root.
-static bool open_repo(AppState& state, const std::string& path)
+static Job make_job(const AppState& state, JobKind kind)
 {
-    std::string root;
-    if (!git_get_repo_root(path, root))
-    {
-        return false;
-    }
+    Job job;
+    job.kind = kind;
+    job.generation = state.repo_generation;
+    job.repo_path = state.active_repo;
+    return job;
+}
 
-    size_t slash = root.find_last_of("\\/");
-    state.active_repo = root;
-    state.active_repo_name = slash != std::string::npos ? root.substr(slash + 1) : root;
-    state.recent_repos.erase(
-        std::remove(state.recent_repos.begin(), state.recent_repos.end(), root),
-        state.recent_repos.end());
-    state.recent_repos.insert(state.recent_repos.begin(), root);
-    state.is_save_requested = true;
-    state.status_message.clear();
-    git_refresh_repo_state(state);
+// Validate and load path on the worker. failure_message is shown if it isn't a repo root.
+static void queue_open_repo(const AppState& state, const std::string& path,
+    const std::string& failure_message)
+{
+    Job job = make_job(state, JobKind::OPEN_REPO);
+    job.text = path;
+    job.text2 = failure_message;
+    jobs_push(job);
+}
 
-    LOG_INFO("open_repo: name='%s' branch='%s'",
-        state.active_repo_name.c_str(), state.current_branch.c_str());
-    return true;
+static void push_request(AppState& state, RequestKind kind)
+{
+    Request request;
+    request.kind = kind;
+    state.requests.push_back(request);
 }
 
 static void app_init(AppState& state, const std::string& app_data_dir)
 {
-    state.is_git_found = git_find_executable(state.git_executable);
     persistence_load(state, app_data_dir);
+    jobs_push(make_job(state, JobKind::FIND_GIT));
 
-    // Restore the last active repo
+    // Restore the last active repository once the worker has checked for Git
+    if (!state.active_repo.empty())
+    {
+        std::string last_repo = state.active_repo;
+        state.active_repo.clear();
+        queue_open_repo(state, last_repo, "Last repository is no longer available.");
+    }
+}
+
+static void queue_diff(const AppState& state)
+{
+    for (const FileStatus& file : state.repo.files)
+    {
+        if (file.path == state.selected_file_path)
+        {
+            Job job = make_job(state, JobKind::LOAD_DIFF);
+            job.file = file;
+            jobs_push(job);
+            return;
+        }
+    }
+}
+
+// Take a new snapshot. Keep the file selection if the file is still changed and reload its
+// diff, since the file may have changed too.
+static void apply_snapshot(AppState& state, const RepoSnapshot& snapshot)
+{
+    state.repo = snapshot;
+    if (state.selected_file_path.empty())
+    {
+        return;
+    }
+
+    for (const FileStatus& file : state.repo.files)
+    {
+        if (file.path == state.selected_file_path)
+        {
+            queue_diff(state);
+            return;
+        }
+    }
+    state.selected_file_path.clear();
+    state.current_diff.clear();
+}
+
+static void apply_open_repo(AppState& state, const JobResult& result)
+{
+    const std::string& root = result.repo_path;
+    size_t slash = root.find_last_of("\\/");
+    state.active_repo = root;
+    state.active_repo_name = slash != std::string::npos ? root.substr(slash + 1) : root;
+    ++state.repo_generation;
+    state.recent_repos.erase(
+        std::remove(state.recent_repos.begin(), state.recent_repos.end(), root),
+        state.recent_repos.end());
+    state.recent_repos.insert(state.recent_repos.begin(), root);
+    state.selected_file_path.clear();
+    state.current_diff.clear();
+    state.status_message.clear();
+    state.repo = result.snapshot;
+    push_request(state, RequestKind::SAVE_SETTINGS);
+    LOG_INFO("open_repo: name='%s' branch='%s'", state.active_repo_name.c_str(),
+        state.repo.current_branch.c_str());
+}
+
+static const char* failure_prefix(JobKind kind)
+{
+    switch (kind)
+    {
+        case JobKind::COMMIT:
+            return "Commit failed: ";
+        case JobKind::CHECKOUT_BRANCH:
+            return "Checkout failed: ";
+        case JobKind::CREATE_BRANCH:
+            return "Could not create branch: ";
+        case JobKind::DELETE_BRANCH:
+            return "Could not delete branch: ";
+        case JobKind::FIND_GIT:
+        case JobKind::OPEN_REPO:
+        case JobKind::REFRESH:
+        case JobKind::LOAD_DIFF:
+            return "";
+    }
+    return "";
+}
+
+static void apply_result(AppState& state, const JobResult& result)
+{
+    switch (result.kind)
+    {
+        case JobKind::FIND_GIT:
+            state.is_git_found = result.is_success;
+            state.git_executable = result.git_executable;
+            if (!result.is_success)
+            {
+                state.status_message = result.error;
+            }
+            return;
+
+        case JobKind::OPEN_REPO:
+            if (result.is_success)
+            {
+                apply_open_repo(state, result);
+            }
+            else
+            {
+                state.status_message = result.error;
+            }
+            return;
+
+        case JobKind::REFRESH:
+        case JobKind::LOAD_DIFF:
+        case JobKind::COMMIT:
+        case JobKind::CHECKOUT_BRANCH:
+        case JobKind::CREATE_BRANCH:
+        case JobKind::DELETE_BRANCH:
+            break;
+    }
+
+    // Everything below belongs to a repository; drop results from one we've left
+    if (result.generation != state.repo_generation || result.repo_path != state.active_repo)
+    {
+        return;
+    }
+
+    if (result.kind == JobKind::LOAD_DIFF)
+    {
+        if (result.diff_path == state.selected_file_path)
+        {
+            state.current_diff = result.is_success ? result.diff : "";
+        }
+        return;
+    }
+
+    if (result.has_snapshot)
+    {
+        apply_snapshot(state, result.snapshot);
+    }
+    if (result.kind == JobKind::REFRESH)
+    {
+        if (!result.is_success)
+        {
+            state.status_message = result.error;
+        }
+        return;
+    }
+
+    if (result.is_success)
+    {
+        state.status_message.clear();
+        state.has_commit_succeeded = result.kind == JobKind::COMMIT;
+    }
+    else
+    {
+        state.status_message = failure_prefix(result.kind) + result.error;
+    }
+}
+
+static void apply_results(AppState& state)
+{
+    JobResult result;
+    while (jobs_pop_result(result))
+    {
+        apply_result(state, result);
+    }
+
+    state.is_busy = jobs_get_status(state.is_mutation_running, state.busy_label);
+}
+
+static void queue_repo_job(const AppState& state, const Request& request, JobKind kind)
+{
     if (state.active_repo.empty())
     {
         return;
     }
 
-    std::string last_repo = state.active_repo;
-    state.active_repo.clear();
-    if (!state.is_git_found)
-    {
-        LOG_WARN("app_init: skipping repo restore, git not found");
-        return;
-    }
-    if (!open_repo(state, last_repo))
-    {
-        state.status_message = "Last repository is no longer available.";
-    }
+    Job job = make_job(state, kind);
+    job.text = request.text;
+    job.text2 = request.text2;
+    job.flag = request.flag;
+    jobs_push(job);
 }
 
-static void load_selected_diff(AppState& state)
+static void handle_request(AppState& state, const Request& request, Window& window,
+    const std::string& app_data_dir)
 {
-    if (state.selected_file_index < 0 ||
-        state.selected_file_index >= (int)state.changed_files.size())
+    switch (request.kind)
     {
-        return;
-    }
+        case RequestKind::OPEN_REPO_DIALOG:
+        {
+            std::string folder;
+            if (pick_folder(window.hwnd, L"Open Repository", folder))
+            {
+                queue_open_repo(state, folder, "Not a valid Git repository root.");
+            }
+            break;
+        }
 
-    const FileStatus& file = state.changed_files[state.selected_file_index];
-    if (!git_get_diff(state.active_repo, file, state.current_diff))
-    {
-        state.current_diff.clear();
+        case RequestKind::SWITCH_REPO:
+            queue_open_repo(state, request.text,
+                "Repository no longer available: " + request.text);
+            break;
+
+        case RequestKind::OPEN_IN_EXPLORER:
+            open_in_explorer(state.active_repo);
+            break;
+
+        case RequestKind::OPEN_IN_TERMINAL:
+            open_in_terminal(window.hwnd, state.active_repo);
+            break;
+
+        case RequestKind::REFRESH:
+            queue_repo_job(state, request, JobKind::REFRESH);
+            break;
+
+        case RequestKind::LOAD_DIFF:
+            queue_diff(state);
+            break;
+
+        case RequestKind::COMMIT:
+            queue_repo_job(state, request, JobKind::COMMIT);
+            break;
+
+        case RequestKind::CHECKOUT_BRANCH:
+            queue_repo_job(state, request, JobKind::CHECKOUT_BRANCH);
+            break;
+
+        case RequestKind::CREATE_BRANCH:
+            queue_repo_job(state, request, JobKind::CREATE_BRANCH);
+            break;
+
+        case RequestKind::DELETE_BRANCH:
+            queue_repo_job(state, request, JobKind::DELETE_BRANCH);
+            break;
+
+        case RequestKind::SAVE_SETTINGS:
+            if (!persistence_save(state, app_data_dir))
+            {
+                state.status_message = "Could not save settings to " + app_data_dir;
+            }
+            break;
+
+        case RequestKind::EXIT:
+            window.is_quit_requested = true;
+            break;
     }
 }
 
-// Handle requests the GUI left in state. Runs after present so blocking work (dialogs, git
-// calls) doesn't stall a half-drawn frame.
+// Handle the requests the GUI made this frame. Runs after present so a dialog doesn't stall a
+// half-drawn frame.
 static void handle_requests(AppState& state, Window& window, const std::string& app_data_dir)
 {
-    if (state.is_open_repo_requested)
+    std::vector<Request> requests;
+    requests.swap(state.requests);
+    for (const Request& request : requests)
     {
-        state.is_open_repo_requested = false;
-        std::string folder;
-        if (pick_folder(window.hwnd, L"Open Repository", folder) && !open_repo(state, folder))
-        {
-            state.status_message = "Not a valid Git repository root.";
-        }
-    }
-
-    if (state.is_exit_requested)
-    {
-        state.is_exit_requested = false;
-        window.is_quit_requested = true;
-    }
-
-    if (state.is_open_in_explorer_requested)
-    {
-        state.is_open_in_explorer_requested = false;
-        open_in_explorer(state.active_repo);
-    }
-
-    if (state.is_open_in_terminal_requested)
-    {
-        state.is_open_in_terminal_requested = false;
-        open_in_terminal(window.hwnd, state.active_repo);
-    }
-
-    if (state.is_diff_requested)
-    {
-        state.is_diff_requested = false;
-        load_selected_diff(state);
-    }
-
-    if (!state.switch_repo_path.empty())
-    {
-        std::string path = state.switch_repo_path;
-        state.switch_repo_path.clear();
-        if (!open_repo(state, path))
-        {
-            state.status_message = "Repository no longer available: " + path;
-        }
-    }
-
-    // Last, so changes made by the requests above are included
-    if (state.is_save_requested)
-    {
-        state.is_save_requested = false;
-        if (!persistence_save(state, app_data_dir))
-        {
-            state.status_message = "Could not save settings to " + app_data_dir;
-        }
+        handle_request(state, request, window, app_data_dir);
     }
 }
 
@@ -692,11 +860,16 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         log_shutdown();
         return 1;
     }
+    if (!jobs_start())
+    {
+        LOG_ERROR("jobs_start failed, aborting");
+        window_shutdown(main_window);
+        log_shutdown();
+        return 1;
+    }
 
     AppState state;
     app_init(state, app_data_dir);
-    LOG_INFO("app_init complete: git=%d repo='%s'", (int)state.is_git_found,
-        state.active_repo.c_str());
 
     int frame_count = 0;
     while (true)
@@ -711,6 +884,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
             continue;
         }
 
+        apply_results(state);
         handle_dpi_change(main_window);
         handle_resize(main_window);
         begin_frame();
@@ -725,6 +899,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         }
     }
 
+    jobs_stop();
     if (!persistence_save(state, app_data_dir))
     {
         LOG_ERROR("persistence_save failed; settings or recent repos were not saved");

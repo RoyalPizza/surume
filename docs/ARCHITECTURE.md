@@ -21,9 +21,9 @@
 ## Modules
 
 - `main.cpp`: entry point and everything Windows-specific: window, D3D11 and ImGui backend setup, the frame loop, folder dialog, Explorer/terminal launch, app-data path. Also app startup and shutdown, and handling of requests from the GUI after each frame.
-- `gui`: all Dear ImGui drawing. Reads `AppState` and records requests; never runs Git. Entry point `gui_render`.
+- `gui`: all Dear ImGui drawing. Reads `AppState` and pushes `Request`s; never runs Git. Entry point `gui_render`.
 - `git`: runs Git (`git_run`) and parses its output into the types in `model.hpp`. Pure functions of a repository path; no knowledge of the GUI or jobs.
-- `jobs` (planned): the worker thread and job queue. Turns requests into `git` calls off the UI thread and hands results back.
+- `jobs`: the worker thread and job queue. Runs `git` calls off the UI thread and hands results back (`jobs_push`, `jobs_pop_result`).
 - `model`: header-only data types and `AppState`.
 - `persistence`: `settings.toml` and `repositories.toml` via tomlc17.
 - `log`: debug-only log file (`SURUME_DEBUG`). User-visible results go through `AppState::status_message`.

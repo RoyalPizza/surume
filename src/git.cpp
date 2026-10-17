@@ -577,24 +577,43 @@ bool git_get_diff(const std::string& repo_path, const FileStatus& file, std::str
     return false;
 }
 
-void git_refresh_repo_state(AppState& state)
+bool git_load_snapshot(const std::string& repo_path, RepoSnapshot& snapshot)
 {
-    if (state.active_repo.empty())
+    snapshot = {};
+    if (!git_get_status(repo_path, snapshot.files))
     {
-        return;
+        return false;
     }
 
-    if (!git_get_current_branch(state.active_repo, state.current_branch))
+    if (!git_get_current_branch(repo_path, snapshot.current_branch))
     {
-        state.current_branch.clear();
+        snapshot.current_branch.clear();
     }
-    git_get_branches(state.active_repo, state.branches);
-    git_get_status(state.active_repo, state.changed_files);
-    git_get_log(state.active_repo, state.commits);
-    state.selected_file_index = -1;
-    state.current_diff.clear();
+    if (!git_get_branches(repo_path, snapshot.branches))
+    {
+        snapshot.branches.clear();
+    }
+    if (!git_get_log(repo_path, snapshot.commits))
+    {
+        snapshot.commits.clear(); // normal for a repository with no commits yet
+    }
 
-    LOG_INFO("git_refresh_repo_state: branch='%s' branches=%d files=%d commits=%d",
-        state.current_branch.c_str(), (int)state.branches.size(),
-        (int)state.changed_files.size(), (int)state.commits.size());
+    LOG_INFO("git_load_snapshot: branch='%s' branches=%d files=%d commits=%d",
+        snapshot.current_branch.c_str(), (int)snapshot.branches.size(),
+        (int)snapshot.files.size(), (int)snapshot.commits.size());
+    return true;
+}
+
+std::string git_error_text(const GitResult& result)
+{
+    std::string text = trim_end(result.error_output);
+    if (text.empty())
+    {
+        text = trim_end(result.output);
+    }
+    if (text.empty())
+    {
+        text = "git exited with code " + std::to_string(result.exit_code);
+    }
+    return text;
 }

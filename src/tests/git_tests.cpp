@@ -135,7 +135,7 @@ static void test_repo_root(const std::string& root)
 {
     std::string repo = create_repo(root, "root check");
     std::string found_root;
-    check(git_get_repo_root(repo, found_root), "repo root accepted for non-ASCII path with spaces");
+    check(git_get_repo_root(repo, found_root), "repo root accepted for non-ASCII path, spaces");
     check_equal(found_root, repo, "repo root is returned with backslashes");
 
     std::string sub = repo + "\\sub";

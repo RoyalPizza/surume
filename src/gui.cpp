@@ -1,6 +1,5 @@
 #include "gui.hpp"
 
-#include "git.hpp"
 #include "log.hpp"
 #include "imgui.h"
 
@@ -108,13 +107,28 @@ static float scaled(float pixels)
     return pixels * ui_scale;
 }
 
+static void request(AppState& state, RequestKind kind)
+{
+    Request request;
+    request.kind = kind;
+    state.requests.push_back(request);
+}
+
+static void request_text(AppState& state, RequestKind kind, const std::string& text)
+{
+    Request request;
+    request.kind = kind;
+    request.text = text;
+    state.requests.push_back(request);
+}
+
 // -------------------------------------------------------------------------
 // Modals
 // -------------------------------------------------------------------------
 
 static void render_about_modal()
 {
-    ImGui::SetNextWindowSize(ImVec2(ABOUT_WIDTH, 0), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(scaled(ABOUT_WIDTH), 0), ImGuiCond_Always);
     if (!ImGui::BeginPopupModal("About Surume", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
     {
         return;
@@ -129,7 +143,7 @@ static void render_about_modal()
     ImGui::Spacing();
 
     ImGui::SetCursorPosX((ImGui::GetWindowWidth() - scaled(ABOUT_BUTTON_WIDTH)) * 0.5f);
-    if (ImGui::Button("OK", ImVec2(ABOUT_BUTTON_WIDTH, 0)))
+    if (ImGui::Button("OK", ImVec2(scaled(ABOUT_BUTTON_WIDTH), 0)))
     {
         ImGui::CloseCurrentPopup();
     }
@@ -149,7 +163,7 @@ static void load_settings_fields(const AppSettings& settings)
 
 static void render_settings_modal(AppState& state)
 {
-    ImGui::SetNextWindowSize(ImVec2(SETTINGS_WIDTH, 0), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(scaled(SETTINGS_WIDTH), 0), ImGuiCond_Always);
     if (!ImGui::BeginPopupModal("Settings", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
     {
         return;
@@ -164,27 +178,27 @@ static void render_settings_modal(AppState& state)
         ImGui::GetStyle().ItemSpacing.x;
 
     ImGui::Text("Git executable path");
-    ImGui::SameLine(SETTINGS_LABEL_WIDTH);
+    ImGui::SameLine(scaled(SETTINGS_LABEL_WIDTH));
     ImGui::SetNextItemWidth(input_width);
     ImGui::InputTextWithHint("##gitpath", "Leave empty to use PATH",
         settings_git_path, sizeof(settings_git_path));
 
     ImGui::Text("Default open directory");
-    ImGui::SameLine(SETTINGS_LABEL_WIDTH);
+    ImGui::SameLine(scaled(SETTINGS_LABEL_WIDTH));
     ImGui::SetNextItemWidth(input_width);
     ImGui::InputTextWithHint("##opendir", "Leave empty for last used",
         settings_open_directory, sizeof(settings_open_directory));
 
     ImGui::Separator();
     ImGui::Text("Auto-fetch");
-    ImGui::SameLine(SETTINGS_LABEL_WIDTH);
+    ImGui::SameLine(scaled(SETTINGS_LABEL_WIDTH));
     ImGui::Checkbox("##autofetch", &settings_is_auto_fetch_enabled);
     if (settings_is_auto_fetch_enabled)
     {
         ImGui::SameLine();
         ImGui::Text("every");
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(AUTO_FETCH_INPUT_WIDTH);
+        ImGui::SetNextItemWidth(scaled(AUTO_FETCH_INPUT_WIDTH));
         ImGui::InputInt("##autofetchminutes", &settings_auto_fetch_minutes,
             AUTO_FETCH_STEP, AUTO_FETCH_FAST_STEP);
         settings_auto_fetch_minutes = std::clamp(settings_auto_fetch_minutes,
@@ -197,19 +211,19 @@ static void render_settings_modal(AppState& state)
     ImGui::Separator();
     ImGui::Spacing();
 
-    if (ImGui::Button("Save", ImVec2(DIALOG_BUTTON_WIDTH, 0)))
+    if (ImGui::Button("Save", ImVec2(scaled(DIALOG_BUTTON_WIDTH), 0)))
     {
         LOG_INFO("Settings: saved");
         state.settings.git_path = settings_git_path;
         state.settings.default_open_directory = settings_open_directory;
         state.settings.is_auto_fetch_enabled = settings_is_auto_fetch_enabled;
         state.settings.auto_fetch_interval_minutes = settings_auto_fetch_minutes;
-        state.is_save_requested = true;
+        request(state, RequestKind::SAVE_SETTINGS);
         is_settings_loaded = false;
         ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
-    if (ImGui::Button("Cancel", ImVec2(DIALOG_BUTTON_WIDTH, 0)))
+    if (ImGui::Button("Cancel", ImVec2(scaled(DIALOG_BUTTON_WIDTH), 0)))
     {
         is_settings_loaded = false;
         ImGui::CloseCurrentPopup();
@@ -221,29 +235,19 @@ static void render_settings_modal(AppState& state)
 static void create_branch(AppState& state)
 {
     LOG_INFO("NewBranchModal: creating branch '%s'", new_branch_name);
-    GitResult result;
-    if (git_create_branch(state.active_repo, new_branch_name, result))
-    {
-        state.status_message.clear();
-        git_refresh_repo_state(state);
-    }
-    else
-    {
-        LOG_ERROR("NewBranchModal: failed: %s", result.error_output.c_str());
-        state.status_message = "Could not create branch: " + result.error_output;
-    }
+    request_text(state, RequestKind::CREATE_BRANCH, new_branch_name);
 }
 
 static void render_new_branch_modal(AppState& state)
 {
-    ImGui::SetNextWindowSize(ImVec2(BRANCH_MODAL_WIDTH, 0), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(scaled(BRANCH_MODAL_WIDTH), 0), ImGuiCond_Always);
     if (!ImGui::BeginPopupModal("New Branch", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
     {
         return;
     }
 
-    const char* source = state.current_branch.empty() ? "(detached HEAD)" :
-        state.current_branch.c_str();
+    const char* source = state.repo.current_branch.empty() ? "(detached HEAD)" :
+        state.repo.current_branch.c_str();
     ImGui::Text("Create from: %s", source);
     ImGui::Spacing();
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
@@ -253,7 +257,8 @@ static void render_new_branch_modal(AppState& state)
 
     bool is_valid = new_branch_name[0] != '\0';
     ImGui::BeginDisabled(!is_valid);
-    bool is_create_clicked = ImGui::Button("Create Branch", ImVec2(CREATE_BRANCH_BUTTON_WIDTH, 0));
+    ImVec2 create_size = ImVec2(scaled(CREATE_BRANCH_BUTTON_WIDTH), 0);
+    bool is_create_clicked = ImGui::Button("Create Branch", create_size);
     ImGui::EndDisabled();
 
     if (is_valid && (is_create_clicked || is_enter_pressed))
@@ -264,7 +269,7 @@ static void render_new_branch_modal(AppState& state)
     }
 
     ImGui::SameLine();
-    if (ImGui::Button("Cancel", ImVec2(DIALOG_BUTTON_WIDTH, 0)))
+    if (ImGui::Button("Cancel", ImVec2(scaled(DIALOG_BUTTON_WIDTH), 0)))
     {
         new_branch_name[0] = '\0';
         ImGui::CloseCurrentPopup();
@@ -276,22 +281,12 @@ static void render_new_branch_modal(AppState& state)
 static void delete_branch(AppState& state, const std::string& name)
 {
     LOG_INFO("DeleteBranchModal: deleting '%s'", name.c_str());
-    GitResult result;
-    if (git_delete_branch(state.active_repo, name, result))
-    {
-        state.status_message.clear();
-        git_refresh_repo_state(state);
-    }
-    else
-    {
-        LOG_ERROR("DeleteBranchModal: failed: %s", result.error_output.c_str());
-        state.status_message = "Could not delete branch: " + result.error_output;
-    }
+    request_text(state, RequestKind::DELETE_BRANCH, name);
 }
 
 static void render_delete_branch_modal(AppState& state)
 {
-    ImGui::SetNextWindowSize(ImVec2(BRANCH_MODAL_WIDTH, 0), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(scaled(BRANCH_MODAL_WIDTH), 0), ImGuiCond_Always);
     if (!ImGui::BeginPopupModal("Delete Branch", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
     {
         return;
@@ -299,7 +294,7 @@ static void render_delete_branch_modal(AppState& state)
 
     // Local branches other than the current one
     std::vector<const BranchInfo*> deletable;
-    for (const BranchInfo& branch : state.branches)
+    for (const BranchInfo& branch : state.repo.branches)
     {
         if (!branch.is_current && branch.location != BranchLocation::REMOTE)
         {
@@ -340,7 +335,7 @@ static void render_delete_branch_modal(AppState& state)
     bool is_valid = delete_branch_selection >= 0 &&
         delete_branch_selection < (int)deletable.size();
     ImGui::BeginDisabled(!is_valid);
-    if (ImGui::Button("Delete", ImVec2(DIALOG_BUTTON_WIDTH, 0)))
+    if (ImGui::Button("Delete", ImVec2(scaled(DIALOG_BUTTON_WIDTH), 0)))
     {
         delete_branch(state, deletable[delete_branch_selection]->name);
         delete_branch_selection = -1;
@@ -349,7 +344,7 @@ static void render_delete_branch_modal(AppState& state)
     ImGui::EndDisabled();
 
     ImGui::SameLine();
-    if (ImGui::Button("Cancel", ImVec2(DIALOG_BUTTON_WIDTH, 0)))
+    if (ImGui::Button("Cancel", ImVec2(scaled(DIALOG_BUTTON_WIDTH), 0)))
     {
         delete_branch_selection = -1;
         ImGui::CloseCurrentPopup();
@@ -396,12 +391,12 @@ static void render_file_menu(AppState& state)
 
     if (ImGui::MenuItem("Open Repository..."))
     {
-        state.is_open_repo_requested = true;
+        request(state, RequestKind::OPEN_REPO_DIALOG);
     }
     ImGui::Separator();
     if (ImGui::MenuItem("Exit", "Alt+F4"))
     {
-        state.is_exit_requested = true;
+        request(state, RequestKind::EXIT);
     }
     ImGui::EndMenu();
 }
@@ -450,11 +445,11 @@ static void render_repository_menu(AppState& state)
     bool has_repo = !state.active_repo.empty();
     if (ImGui::MenuItem("Open in Explorer", nullptr, false, has_repo))
     {
-        state.is_open_in_explorer_requested = true;
+        request(state, RequestKind::OPEN_IN_EXPLORER);
     }
     if (ImGui::MenuItem("Open in Terminal", nullptr, false, has_repo))
     {
-        state.is_open_in_terminal_requested = true;
+        request(state, RequestKind::OPEN_IN_TERMINAL);
     }
     ImGui::Separator();
     if (ImGui::MenuItem("Settings..."))
@@ -551,7 +546,7 @@ static void render_repo_picker(AppState& state)
         {
             if (ImGui::Selectable(folder_name(repo).c_str()))
             {
-                state.switch_repo_path = repo;
+                request_text(state, RequestKind::SWITCH_REPO, repo);
                 ImGui::CloseCurrentPopup();
             }
             if (ImGui::IsItemHovered())
@@ -564,7 +559,7 @@ static void render_repo_picker(AppState& state)
 
     if (ImGui::Selectable("  Open..."))
     {
-        state.is_open_repo_requested = true;
+        request(state, RequestKind::OPEN_REPO_DIALOG);
         ImGui::CloseCurrentPopup();
     }
     ImGui::EndPopup();
@@ -588,18 +583,11 @@ static const char* branch_indicator(BranchLocation location)
 static void checkout_branch(AppState& state, const BranchInfo& branch)
 {
     LOG_INFO("BranchPicker: checking out '%s'", branch.name.c_str());
-    GitResult result;
-    bool is_remote = branch.location == BranchLocation::REMOTE;
-    if (git_checkout_branch(state.active_repo, branch.name, is_remote, result))
-    {
-        state.status_message.clear();
-        git_refresh_repo_state(state);
-    }
-    else
-    {
-        LOG_ERROR("BranchPicker: checkout failed: %s", result.error_output.c_str());
-        state.status_message = "Checkout failed: " + result.error_output;
-    }
+    Request checkout;
+    checkout.kind = RequestKind::CHECKOUT_BRANCH;
+    checkout.text = branch.name;
+    checkout.flag = branch.location == BranchLocation::REMOTE;
+    state.requests.push_back(checkout);
 }
 
 static void render_branch_picker_popup(AppState& state)
@@ -607,8 +595,7 @@ static void render_branch_picker_popup(AppState& state)
     ImGui::TextDisabled("Switch Branch");
     ImGui::Separator();
 
-    // Copy: a checkout refreshes state.branches while we're iterating it
-    std::vector<BranchInfo> branches = state.branches;
+    const std::vector<BranchInfo>& branches = state.repo.branches;
     for (const BranchInfo& branch : branches)
     {
         char entry[PICKER_LABEL_SIZE];
@@ -635,10 +622,12 @@ static void render_branch_picker_popup(AppState& state)
 
 static void render_branch_picker(AppState& state)
 {
+    // No switching while another change to the repository is still running
     bool has_repo = !state.active_repo.empty();
-    ImGui::BeginDisabled(!has_repo);
+    ImGui::BeginDisabled(!has_repo || state.is_mutation_running);
 
-    const char* name = state.current_branch.empty() ? "No Branch" : state.current_branch.c_str();
+    const std::string& current = state.repo.current_branch;
+    const char* name = current.empty() ? "No Branch" : current.c_str();
     char label[PICKER_LABEL_SIZE];
     snprintf(label, sizeof(label), " %s  v ##branchbutton", name);
     if (ImGui::Button(label))
@@ -661,9 +650,20 @@ static void render_sync_button(const AppState& state, float padding_y)
     const char* label = "Fetch origin";
     float width = ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2 +
         scaled(SYNC_BUTTON_EXTRA_WIDTH);
-    ImGui::SetCursorPosY(padding_y);
-    ImGui::SetCursorPosX(ImGui::GetWindowWidth() - width - scaled(HEADER_PADDING_X));
+    float x = ImGui::GetWindowWidth() - width - scaled(HEADER_PADDING_X);
 
+    // What the worker is doing, left of the button
+    if (state.is_busy && !state.busy_label.empty())
+    {
+        char busy[PICKER_LABEL_SIZE];
+        snprintf(busy, sizeof(busy), "%s...", state.busy_label.c_str());
+        float busy_width = ImGui::CalcTextSize(busy).x;
+        ImGui::SetCursorPos(ImVec2(x - busy_width - scaled(HEADER_PADDING_X),
+            padding_y + ImGui::GetStyle().FramePadding.y));
+        ImGui::TextDisabled("%s", busy);
+    }
+
+    ImGui::SetCursorPos(ImVec2(x, padding_y));
     ImGui::BeginDisabled(state.active_repo.empty());
     if (ImGui::Button(label, ImVec2(width, 0)))
     {
@@ -674,8 +674,8 @@ static void render_sync_button(const AppState& state, float padding_y)
 
 static void render_header_bar(AppState& state)
 {
-    float padding_y = (HEADER_HEIGHT - ImGui::GetFrameHeight()) * 0.5f;
-    ImGui::SetCursorPos(ImVec2(HEADER_PADDING_X, padding_y));
+    float padding_y = (scaled(HEADER_HEIGHT) - ImGui::GetFrameHeight()) * 0.5f;
+    ImGui::SetCursorPos(ImVec2(scaled(HEADER_PADDING_X), padding_y));
 
     render_repo_picker(state);
     ImGui::SameLine(0, scaled(HEADER_BUTTON_SPACING));
@@ -718,7 +718,7 @@ static FileBadge file_badge(const FileStatus& file)
 
 static void render_file_row(AppState& state, int index, float badge_width, float row_width)
 {
-    const FileStatus& file = state.changed_files[index];
+    const FileStatus& file = state.repo.files[index];
     FileBadge badge = file_badge(file);
 
     ImGui::TextColored(badge.color, "%c", badge.letter);
@@ -734,12 +734,13 @@ static void render_file_row(AppState& state, int index, float badge_width, float
         display_path.pop_back();
     }
 
-    bool is_selected = state.selected_file_index == index;
+    bool is_selected = state.selected_file_path == file.path;
     if (ImGui::Selectable(display_path.c_str(), is_selected,
         ImGuiSelectableFlags_SpanAllColumns, ImVec2(row_width, 0)) && !is_selected)
     {
-        state.selected_file_index = index;
-        state.is_diff_requested = true;
+        state.selected_file_path = file.path;
+        state.current_diff.clear();
+        request(state, RequestKind::LOAD_DIFF);
     }
     if (!file.old_path.empty() && ImGui::IsItemHovered())
     {
@@ -753,7 +754,7 @@ static void render_file_list(AppState& state)
     {
         return;
     }
-    if (state.changed_files.empty())
+    if (state.repo.files.empty())
     {
         ImGui::TextDisabled("No local changes");
         return;
@@ -762,7 +763,7 @@ static void render_file_list(AppState& state)
     const ImGuiStyle& style = ImGui::GetStyle();
     float badge_width = ImGui::CalcTextSize("M").x + style.ItemSpacing.x * 3;
     float row_width = ImGui::GetContentRegionAvail().x - badge_width - style.ItemSpacing.x;
-    for (int i = 0; i < (int)state.changed_files.size(); ++i)
+    for (int i = 0; i < (int)state.repo.files.size(); ++i)
     {
         ImGui::PushID(i);
         render_file_row(state, i, badge_width, row_width);
@@ -772,28 +773,28 @@ static void render_file_list(AppState& state)
 
 static void commit(AppState& state)
 {
-    LOG_INFO("Commit: summary='%s' branch='%s'", commit_summary, state.current_branch.c_str());
-    GitResult result;
-    if (git_commit(state.active_repo, commit_summary, commit_description, result))
-    {
-        commit_summary[0] = '\0';
-        commit_description[0] = '\0';
-        state.status_message.clear();
-        git_refresh_repo_state(state);
-    }
-    else
-    {
-        LOG_ERROR("Commit failed: %s", result.error_output.c_str());
-        state.status_message = "Commit failed: " + result.error_output;
-    }
+    LOG_INFO("Commit: summary='%s' branch='%s'", commit_summary,
+        state.repo.current_branch.c_str());
+    Request commit_request;
+    commit_request.kind = RequestKind::COMMIT;
+    commit_request.text = commit_summary;
+    commit_request.text2 = commit_description;
+    state.requests.push_back(commit_request);
 }
 
 static void render_commit_footer(AppState& state, float width)
 {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
-        ImVec2(COMMIT_FOOTER_PADDING_X, scaled(COMMIT_FOOTER_PADDING_Y)));
+        ImVec2(scaled(COMMIT_FOOTER_PADDING_X), scaled(COMMIT_FOOTER_PADDING_Y)));
     ImGui::BeginChild("##commitfooter", ImVec2(width, scaled(COMMIT_FOOTER_HEIGHT)), false,
         ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+
+    if (state.has_commit_succeeded)
+    {
+        commit_summary[0] = '\0';
+        commit_description[0] = '\0';
+        state.has_commit_succeeded = false;
+    }
 
     bool has_repo = !state.active_repo.empty();
     float input_width = ImGui::GetContentRegionAvail().x;
@@ -807,10 +808,11 @@ static void render_commit_footer(AppState& state, float width)
         ImVec2(input_width, scaled(COMMIT_DESCRIPTION_HEIGHT)));
     ImGui::Spacing();
 
-    bool can_commit = has_repo && commit_summary[0] != '\0';
+    bool can_commit = has_repo && commit_summary[0] != '\0' && !state.is_mutation_running;
     ImGui::BeginDisabled(!can_commit);
     char label[COMMIT_LABEL_SIZE];
-    const char* branch = state.current_branch.empty() ? "branch" : state.current_branch.c_str();
+    const std::string& current = state.repo.current_branch;
+    const char* branch = current.empty() ? "branch" : current.c_str();
     snprintf(label, sizeof(label), "Commit to %s", branch);
     if (ImGui::Button(label, ImVec2(input_width, 0)))
     {
@@ -859,17 +861,17 @@ static void render_history_tab(const AppState& state)
         ImGui::EndChild();
         return;
     }
-    if (state.commits.empty())
+    if (state.repo.commits.empty())
     {
         ImGui::TextDisabled("No commits on this branch.");
         ImGui::EndChild();
         return;
     }
 
-    for (int i = 0; i < (int)state.commits.size(); ++i)
+    for (int i = 0; i < (int)state.repo.commits.size(); ++i)
     {
         ImGui::PushID(i);
-        render_commit_row(state.commits[i]);
+        render_commit_row(state.repo.commits[i]);
         ImGui::PopID();
     }
 
@@ -1050,9 +1052,9 @@ static void render_empty_state(AppState& state, ImVec2 available)
     float button_height = ImGui::GetFrameHeight();
     ImGui::SetCursorPos(ImVec2((available.x - scaled(EMPTY_STATE_BUTTON_WIDTH)) * 0.5f,
         (available.y - button_height * 2) * 0.5f));
-    if (ImGui::Button("Open repository...", ImVec2(EMPTY_STATE_BUTTON_WIDTH, 0)))
+    if (ImGui::Button("Open repository...", ImVec2(scaled(EMPTY_STATE_BUTTON_WIDTH), 0)))
     {
-        state.is_open_repo_requested = true;
+        request(state, RequestKind::OPEN_REPO_DIALOG);
     }
 
     float text_width = ImGui::CalcTextSize("No repository open").x;
@@ -1068,7 +1070,7 @@ static void render_right_content(AppState& state)
     {
         render_empty_state(state, available);
     }
-    else if (state.selected_file_index < 0)
+    else if (state.selected_file_path.empty())
     {
         float hint_y = available.y * EMPTY_HINT_Y_FRACTION;
         render_centered_hint("Select a file to view its diff", hint_y);
@@ -1081,7 +1083,7 @@ static void render_right_content(AppState& state)
     if (!state.status_message.empty())
     {
         float line_height = ImGui::GetTextLineHeightWithSpacing();
-        ImGui::SetCursorPos(ImVec2(STATUS_MESSAGE_MARGIN_X,
+        ImGui::SetCursorPos(ImVec2(scaled(STATUS_MESSAGE_MARGIN_X),
             available.y - line_height - scaled(STATUS_MESSAGE_MARGIN_BOTTOM)));
         ImGui::TextColored(COLOR_ERROR_TEXT, "%s", state.status_message.c_str());
     }
@@ -1094,7 +1096,7 @@ static void render_right_content(AppState& state)
 static void render_splitter(AppState& state, float height)
 {
     ImVec2 top_left = ImGui::GetCursorScreenPos();
-    ImGui::InvisibleButton("##splitter", ImVec2(SPLITTER_WIDTH, height));
+    ImGui::InvisibleButton("##splitter", ImVec2(scaled(SPLITTER_WIDTH), height));
 
     bool is_active = ImGui::IsItemActive();
     bool is_hovered = ImGui::IsItemHovered();
@@ -1107,7 +1109,7 @@ static void render_splitter(AppState& state, float height)
     }
     if (ImGui::IsItemDeactivated())
     {
-        state.is_save_requested = true;
+        request(state, RequestKind::SAVE_SETTINGS);
     }
     if (is_active || is_hovered)
     {
