@@ -127,6 +127,8 @@ enum class RequestKind
     CHECKOUT_BRANCH,  // text: branch name, flag: is a remote branch
     CREATE_BRANCH,    // text: branch name
     DELETE_BRANCH,    // text: branch name
+    DISCARD,          // text: file path; empty discards every change
+    SHOW_IN_EXPLORER, // text: file path inside the repository
     SAVE_SETTINGS,
     EXIT,
 };

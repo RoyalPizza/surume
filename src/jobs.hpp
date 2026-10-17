@@ -18,6 +18,7 @@ enum class JobKind
     CHECKOUT_BRANCH, // text: branch name, flag: is a remote branch
     CREATE_BRANCH,   // text: branch name
     DELETE_BRANCH,   // text: branch name
+    DISCARD,         // files: the changes to throw away
 };
 
 struct Job
@@ -30,6 +31,7 @@ struct Job
     bool flag = false;
     FileStatus file;
     std::vector<std::string> paths;
+    std::vector<FileStatus> files;
 };
 
 struct JobResult

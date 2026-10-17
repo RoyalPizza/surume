@@ -431,6 +431,50 @@ static void test_commit_details(const std::string& root)
         diff.find("+hello") != std::string::npos, "file diff for a commit");
 }
 
+static bool file_exists(const std::string& path)
+{
+    return GetFileAttributesW(to_wide(path).data()) != INVALID_FILE_ATTRIBUTES;
+}
+
+static void test_discard(const std::string& root)
+{
+    std::string repo = create_repo(root, "discard");
+    write_file(repo + "\\mod.txt", "original\n");
+    write_file(repo + "\\gone.txt", "keep me\n");
+    write_file(repo + "\\old.txt", "rename me\n");
+    run(repo, { "add", "." });
+    run(repo, { "commit", "-q", "-m", "init" });
+
+    write_file(repo + "\\mod.txt", "changed\n");
+    run(repo, { "add", "mod.txt" });
+    write_file(repo + "\\mod.txt", "changed again\n");
+    run(repo, { "rm", "-q", "gone.txt" });
+    write_file(repo + "\\added.txt", "new\n");
+    run(repo, { "add", "added.txt" });
+    write_file(repo + "\\untracked.txt", "junk\n");
+    run(repo, { "mv", "old.txt", "new.txt" });
+
+    std::vector<FileStatus> files;
+    git_get_status(repo, files);
+    GitResult result;
+    check(git_discard(repo, files, result), "discard every kind of change");
+
+    git_get_status(repo, files);
+    check(files.empty(), "working tree is clean after discarding everything");
+    check(!file_exists(repo + "\\added.txt") && !file_exists(repo + "\\untracked.txt") &&
+        !file_exists(repo + "\\new.txt"), "new, untracked and renamed-to files are gone");
+    check(file_exists(repo + "\\gone.txt") && file_exists(repo + "\\old.txt"),
+        "deleted and renamed-from files are back");
+
+    // Repository with no commits: discarding a staged new file removes it
+    std::string empty_repo = create_repo(root, "discard empty");
+    write_file(empty_repo + "\\first.txt", "x\n");
+    run(empty_repo, { "add", "first.txt" });
+    git_get_status(empty_repo, files);
+    check(git_discard(empty_repo, files, result) && !file_exists(empty_repo + "\\first.txt"),
+        "discard in a repository with no commits");
+}
+
 static void test_persistence(const std::string& root)
 {
     std::string dir = root + "\\app data \xC3\xBC\\"; // "ü"
@@ -487,6 +531,7 @@ int main()
     test_commit_paths(root);
     test_diff(root);
     test_commit_details(root);
+    test_discard(root);
     test_persistence(root);
 
     delete_tree(root);

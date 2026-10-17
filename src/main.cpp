@@ -529,6 +529,21 @@ static void open_in_explorer(const std::string& path)
     ShellExecuteW(nullptr, L"explore", wide_path.data(), nullptr, nullptr, SW_SHOWDEFAULT);
 }
 
+// Open Explorer on the folder containing path, with the file selected.
+static void show_in_explorer(const std::string& path)
+{
+    std::string windows_path = path;
+    for (char& c : windows_path)
+    {
+        if (c == '/')
+        {
+            c = '\\';
+        }
+    }
+    std::vector<wchar_t> args = to_wide("/select,\"" + windows_path + "\"");
+    ShellExecuteW(nullptr, L"open", L"explorer.exe", args.data(), nullptr, SW_SHOWDEFAULT);
+}
+
 static void open_in_terminal(HWND parent, const std::string& path)
 {
     LOG_INFO("open_in_terminal '%s'", path.c_str());
@@ -717,6 +732,8 @@ static const char* failure_prefix(JobKind kind)
             return "Could not create branch: ";
         case JobKind::DELETE_BRANCH:
             return "Could not delete branch: ";
+        case JobKind::DISCARD:
+            return "Could not discard changes: ";
         case JobKind::FIND_GIT:
         case JobKind::OPEN_REPO:
         case JobKind::REFRESH:
@@ -766,6 +783,7 @@ static void apply_result(AppState& state, const JobResult& result)
         case JobKind::CHECKOUT_BRANCH:
         case JobKind::CREATE_BRANCH:
         case JobKind::DELETE_BRANCH:
+        case JobKind::DISCARD:
             break;
     }
 
@@ -880,6 +898,28 @@ static void queue_commit_diff(const AppState& state)
     }
 }
 
+// Discard one file's changes, or every change when path is empty.
+static void queue_discard(const AppState& state, const std::string& path)
+{
+    if (state.active_repo.empty())
+    {
+        return;
+    }
+
+    Job job = make_job(state, JobKind::DISCARD);
+    for (const FileStatus& file : state.repo.files)
+    {
+        if (path.empty() || file.path == path)
+        {
+            job.files.push_back(file);
+        }
+    }
+    if (!job.files.empty())
+    {
+        jobs_push(job);
+    }
+}
+
 // Commit the ticked files: both sides of a rename, so the old path's removal is included.
 static void queue_commit(const AppState& state)
 {
@@ -964,6 +1004,14 @@ static void handle_request(AppState& state, const Request& request, Window& wind
 
         case RequestKind::DELETE_BRANCH:
             queue_repo_job(state, request, JobKind::DELETE_BRANCH);
+            break;
+
+        case RequestKind::DISCARD:
+            queue_discard(state, request.text);
+            break;
+
+        case RequestKind::SHOW_IN_EXPLORER:
+            show_in_explorer(state.active_repo + "\\" + request.text);
             break;
 
         case RequestKind::SAVE_SETTINGS:

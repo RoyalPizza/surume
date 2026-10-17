@@ -94,6 +94,8 @@ static char settings_open_directory[SETTINGS_PATH_SIZE] = {};
 static bool settings_is_auto_fetch_enabled = false;
 static int settings_auto_fetch_minutes = 15;
 static bool is_settings_loaded = false;
+static std::string pending_discard_path; // empty means every change
+static bool is_discard_modal_requested = false;
 static NavMode shown_nav_mode = NavMode::CHANGES;
 static bool should_scroll_to_selection = false; // set by arrow keys; the row scrolls into view
 static std::vector<int> visible_files;          // filtered file indices, rebuilt every frame
@@ -124,6 +126,13 @@ static void request_text(AppState& state, RequestKind kind, const std::string& t
     request.kind = kind;
     request.text = text;
     state.requests.push_back(request);
+}
+
+// Ask for confirmation before discarding path, or every change when path is empty.
+static void request_discard(const std::string& path)
+{
+    pending_discard_path = path;
+    is_discard_modal_requested = true;
 }
 
 // -------------------------------------------------------------------------
@@ -357,9 +366,47 @@ static void render_delete_branch_modal(AppState& state)
     ImGui::EndPopup();
 }
 
+static void render_discard_modal(AppState& state)
+{
+    ImGui::SetNextWindowSize(ImVec2(scaled(BRANCH_MODAL_WIDTH), 0), ImGuiCond_Always);
+    if (!ImGui::BeginPopupModal("Discard Changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        return;
+    }
+
+    if (pending_discard_path.empty())
+    {
+        ImGui::TextWrapped("Discard all %d changed files?", (int)state.repo.files.size());
+    }
+    else
+    {
+        ImGui::TextWrapped("Discard changes to %s?", pending_discard_path.c_str());
+    }
+    ImGui::TextDisabled("New files are deleted. This can't be undone.");
+    ImGui::Spacing();
+
+    if (ImGui::Button("Discard", ImVec2(scaled(DIALOG_BUTTON_WIDTH), 0)))
+    {
+        request_text(state, RequestKind::DISCARD, pending_discard_path);
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(scaled(DIALOG_BUTTON_WIDTH), 0)) ||
+        ImGui::IsKeyPressed(ImGuiKey_Escape))
+    {
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
 // Open any modals the GUI requested last frame. Must run before the modals are drawn.
 static void open_requested_modals(AppState& state)
 {
+    if (is_discard_modal_requested)
+    {
+        ImGui::OpenPopup("Discard Changes");
+        is_discard_modal_requested = false;
+    }
     if (state.is_about_modal_requested)
     {
         ImGui::OpenPopup("About Surume");
@@ -459,6 +506,12 @@ static void render_repository_menu(AppState& state)
     if (ImGui::MenuItem("Open in Terminal", nullptr, false, has_repo))
     {
         request(state, RequestKind::OPEN_IN_TERMINAL);
+    }
+    ImGui::Separator();
+    bool can_discard = has_repo && !state.repo.files.empty() && !state.is_mutation_running;
+    if (ImGui::MenuItem("Discard all changes...", nullptr, false, can_discard))
+    {
+        request_discard("");
     }
     ImGui::Separator();
     if (ImGui::MenuItem("Settings..."))
@@ -830,6 +883,31 @@ static void select_file(AppState& state, const FileStatus& file)
     request(state, RequestKind::LOAD_DIFF);
 }
 
+// Right-click menu on a changed file.
+static void render_file_context_menu(AppState& state, const FileStatus& file)
+{
+    if (!ImGui::BeginPopupContextItem("##filemenu"))
+    {
+        return;
+    }
+
+    if (ImGui::MenuItem("Discard changes...", nullptr, false, !state.is_mutation_running))
+    {
+        request_discard(file.path);
+    }
+    ImGui::Separator();
+    if (ImGui::MenuItem("Copy path"))
+    {
+        ImGui::SetClipboardText(file.path.c_str());
+    }
+    bool exists_on_disk = file.worktree_status != 'D';
+    if (ImGui::MenuItem("Show in Explorer", nullptr, false, exists_on_disk))
+    {
+        request_text(state, RequestKind::SHOW_IN_EXPLORER, file.path);
+    }
+    ImGui::EndPopup();
+}
+
 static void render_file_row(AppState& state, int index, const FileRowLayout& layout)
 {
     const FileStatus& file = state.repo.files[index];
@@ -879,6 +957,7 @@ static void render_file_row(AppState& state, int index, const FileRowLayout& lay
     {
         ImGui::SetTooltip("Renamed from: %s", file.old_path.c_str());
     }
+    render_file_context_menu(state, file);
 }
 
 // Tick-all checkbox (mixed when only some files are ticked) and the file count.
@@ -1595,6 +1674,7 @@ void gui_render(AppState& state)
     render_settings_modal(state);
     render_new_branch_modal(state);
     render_delete_branch_modal(state);
+    render_discard_modal(state);
 
     render_menu_bar(state);
 

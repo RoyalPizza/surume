@@ -533,6 +533,87 @@ bool git_commit_paths(const std::string& repo_path, const std::vector<std::strin
     return git_commit(repo_path, summary, description, result);
 }
 
+// Run "git <command...> --pathspec-from-file=<temp> --pathspec-file-nul" for paths.
+static bool run_with_pathspec(const std::string& repo_path, std::vector<std::string> args,
+    const std::vector<std::string>& paths, GitResult& result)
+{
+    std::string pathspec_file;
+    if (!write_pathspec_file(paths, pathspec_file))
+    {
+        result = {};
+        result.error_output = "Could not write the list of files.";
+        return false;
+    }
+    args.insert(args.begin(), "--literal-pathspecs");
+    args.push_back("--pathspec-from-file=" + pathspec_file);
+    args.push_back("--pathspec-file-nul");
+    bool is_ok = git_run(repo_path, args, result);
+    delete_file(pathspec_file);
+    return is_ok;
+}
+
+static bool delete_worktree_file(const std::string& repo_path, const std::string& path,
+    GitResult& result)
+{
+    std::string full_path = repo_path + "\\" + to_backslashes(path);
+    if (!DeleteFileW(to_wide(full_path).data()) && GetLastError() != ERROR_FILE_NOT_FOUND)
+    {
+        result = {};
+        result.error_output = "Could not delete " + path;
+        return false;
+    }
+    return true;
+}
+
+bool git_discard(const std::string& repo_path, const std::vector<FileStatus>& files,
+    GitResult& result)
+{
+    result = {};
+    std::vector<std::string> tracked;
+    for (const FileStatus& file : files)
+    {
+        if (file.index_status == '?' && file.worktree_status == '?')
+        {
+            if (!delete_worktree_file(repo_path, file.path, result))
+            {
+                return false;
+            }
+            continue;
+        }
+        tracked.push_back(file.path);
+        if (!file.old_path.empty())
+        {
+            tracked.push_back(file.old_path);
+        }
+    }
+    if (tracked.empty())
+    {
+        return true;
+    }
+
+    GitResult head_check;
+    if (git_run(repo_path, { "rev-parse", "--verify", "-q", "HEAD" }, head_check))
+    {
+        // Paths missing from HEAD (newly added files) are removed from index and disk
+        return run_with_pathspec(repo_path, { "restore", "--source=HEAD", "--staged",
+            "--worktree" }, tracked, result);
+    }
+
+    // No commits yet: everything tracked is a new file
+    if (!run_with_pathspec(repo_path, { "rm", "-q", "--cached", "-f" }, tracked, result))
+    {
+        return false;
+    }
+    for (const std::string& path : tracked)
+    {
+        if (!delete_worktree_file(repo_path, path, result))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool git_get_log(const std::string& repo_path, std::vector<CommitInfo>& commits)
 {
     commits.clear();

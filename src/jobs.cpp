@@ -29,6 +29,7 @@ static bool is_mutation(JobKind kind)
         case JobKind::CHECKOUT_BRANCH:
         case JobKind::CREATE_BRANCH:
         case JobKind::DELETE_BRANCH:
+        case JobKind::DISCARD:
             return true;
         case JobKind::FIND_GIT:
         case JobKind::OPEN_REPO:
@@ -64,6 +65,8 @@ static const char* job_label(JobKind kind)
             return "Creating branch";
         case JobKind::DELETE_BRANCH:
             return "Deleting branch";
+        case JobKind::DISCARD:
+            return "Discarding changes";
     }
     return "Working";
 }
@@ -171,6 +174,13 @@ static void run_job(const Job& job, JobResult& result)
         case JobKind::DELETE_BRANCH:
         {
             bool is_success = git_delete_branch(job.repo_path, job.text, git_result);
+            finish_mutation(job, is_success, git_result, result);
+            break;
+        }
+
+        case JobKind::DISCARD:
+        {
+            bool is_success = git_discard(job.repo_path, job.files, git_result);
             finish_mutation(job, is_success, git_result, result);
             break;
         }

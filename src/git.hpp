@@ -56,6 +56,11 @@ bool git_commit(const std::string& repo_path, const std::string& summary,
 bool git_commit_paths(const std::string& repo_path, const std::vector<std::string>& paths,
     const std::string& summary, const std::string& description, GitResult& result);
 
+// Throw away the changes to files: tracked files go back to HEAD (index and working tree,
+// both sides of a rename), untracked files are deleted. Returns false on failure.
+bool git_discard(const std::string& repo_path, const std::vector<FileStatus>& files,
+    GitResult& result);
+
 // Read recent commits on the current branch, newest first. Returns false on error
 // (including a repository with no commits yet).
 bool git_get_log(const std::string& repo_path, std::vector<CommitInfo>& commits);
