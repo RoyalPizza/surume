@@ -5,7 +5,7 @@
 - C++20 or newer.
 - Dear ImGui for immediate-mode UI.
 - Windows v1 uses a native Win32 window with Dear ImGui's Win32 + Direct3D 11 backend.
-- Other platform backends are deferred.
+- Windows only. There are no plans for other platforms at the moment, so Win32 code lives directly in `main.cpp` with no platform abstraction layer.
 - No build system: a plain `build.bat` calls MSVC `cl` directly.
 
 ## Engineering Principles
@@ -51,13 +51,11 @@ The first version requires an installed `git` executable. Surume should detect G
 
 ## Major Modules
 
-- `main.cpp`: entry point and main loop. Also handles deferred requests from the UI (open repository dialog, repository switch, diff load) after each frame is presented.
-- `App`: startup (Git detection, loading persistence, restoring the last repository), per-frame tick (currently empty), shutdown, and repository state refresh.
-- `Ui`: Dear ImGui screens, panels, dialogs, and layout.
-- `Git`: Git command execution and parsing for status, diff, branches, commits, and log. Sync operations are not implemented yet.
+- `main.cpp`: entry point and everything Windows-specific. Win32 window, D3D11 and ImGui backend setup, frame present, the folder dialog, Open in Explorer/Terminal, and the app-data path. Also app startup (Git detection, loading persistence, restoring the last repository), the main loop, shutdown, and deferred requests from the UI (open repository, open in Explorer/Terminal, repository switch, diff load), handled after each frame is presented.
+- `Gui`: Dear ImGui screens, panels, dialogs, and layout.
+- `Git`: Git command execution and parsing for status, diff, branches, commits, and log, plus `RefreshRepoState` to reload all of it into `AppState`. Sync operations are not implemented yet.
 - `Model`: header-only. The central `AppState` struct and the plain data types it holds.
 - `Jobs`: background task queue for Git operations. Not implemented yet.
-- `Platform`: window and D3D11 setup, frame begin/present, folder dialog, open in Explorer/terminal, app-data path. Platform-specific implementations per OS (e.g., `platform_win32.cpp`).
 - `Persistence`: recent repositories, panel layout, user preferences. Serialization via TOML using tomlc17.
 - `Log`: diagnostic log file, compiled in only for debug builds (`SURUME_DEBUG`). User-visible operation results go through `AppState::statusMessage`.
 

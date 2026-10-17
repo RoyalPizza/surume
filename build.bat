@@ -18,7 +18,10 @@ call "%VCVARS%" >nul 2>nul
 set BIN=bin
 set OBJ=obj
 if not exist %BIN% mkdir %BIN%
-if not exist %OBJ% mkdir %OBJ%
+rem Every build recompiles everything, so start obj\ clean. Linking obj\*.obj would
+rem otherwise pick up stale objects from renamed sources or the other configuration.
+if exist %OBJ% rmdir /s /q %OBJ%
+mkdir %OBJ%
 
 set IMGUI=third-party\imgui
 set TOML=third-party\tomlc17\src

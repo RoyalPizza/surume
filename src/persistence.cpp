@@ -1,5 +1,4 @@
 #include "persistence.hpp"
-#include "platform.hpp"
 #include "log.hpp"
 #include <cstdio>
 #include <string>
@@ -18,8 +17,7 @@ static std::string EscapeToml(const std::string& s) {
     return r;
 }
 
-void Persistence::Load(AppState& state) {
-    std::string dir = Platform::GetAppDataDir();
+void Persistence::Load(AppState& state, const std::string& dir) {
     if (dir.empty()) {
         LOG_WARN("Persistence::Load: no app data dir");
         return;
@@ -82,8 +80,7 @@ void Persistence::Load(AppState& state) {
     }
 }
 
-void Persistence::Save(const AppState& state) {
-    std::string dir = Platform::GetAppDataDir();
+void Persistence::Save(const AppState& state, const std::string& dir) {
     if (dir.empty()) {
         LOG_WARN("Persistence::Save: no app data dir");
         return;

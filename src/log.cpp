@@ -2,8 +2,6 @@
 
 #ifdef SURUME_DEBUG
 
-#include "platform.hpp"
-
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -23,9 +21,7 @@ static const char* Basename(const char* path) {
     return last;
 }
 
-void Log::Init() {
-    // Lives in app data next to the settings files, so bin\ only holds binaries
-    std::string dir = Platform::GetAppDataDir();
+void Log::Init(const std::string& dir) {
     if (dir.empty()) return;
     std::string path = dir + "surume_debug.log";
 

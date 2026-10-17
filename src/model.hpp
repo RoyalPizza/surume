@@ -65,8 +65,10 @@ struct AppState {
     bool        gitFound    = false;
     std::string gitExePath;
 
-    // Deferred platform actions (resolved in main loop after Present)
+    // Deferred actions (handled in main.cpp after Present)
     bool        requestOpenRepo       = false;
+    bool        requestOpenInExplorer = false;
+    bool        requestOpenInTerminal = false;
     std::string requestSwitchRepoPath;
 
     // Modal visibility flags (set in UI, cleared after OpenPopup)

@@ -15,7 +15,7 @@ namespace Git {
     GitResult Run(const std::string& repoPath, std::vector<std::string> args);
 
     // Check if git is available. Returns "git" if found in PATH, empty otherwise.
-    std::string FindExecutable();
+    std::string FindGitExecutable();
 
     // Validate path as a repo root. Returns canonical root (backslashes) or empty.
     std::string GetRepoRoot(const std::string& path);
@@ -46,4 +46,7 @@ namespace Git {
 
     // Return unified diff for a single file.
     std::string GetDiff(const std::string& repoPath, const FileStatus& file);
+
+    // Re-read branch, branches, status, and log for state.activeRepo. Clears the file selection.
+    void RefreshRepoState(AppState& state);
 }

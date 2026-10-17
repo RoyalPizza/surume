@@ -8,7 +8,7 @@ The application should feel immediate and practical rather than decorative. Dear
 
 ## Current Status
 
-This document is the spec inherited from Gitaluna and is due for a redesign (see `tasks.md`). The code implements part of it:
+This document is the spec inherited from Gitaluna and is due for a redesign (see `TASKS.md`). The code implements part of it:
 
 | Area | Status |
 | --- | --- |

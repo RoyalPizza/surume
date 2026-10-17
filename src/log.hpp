@@ -2,8 +2,11 @@
 
 #ifdef SURUME_DEBUG
 
+#include <string>
+
 namespace Log {
-    void Init();
+    // Open surume_debug.log in dir (the app-data folder). Logging stays off if dir is empty.
+    void Init(const std::string& dir);
     void Shutdown();
     void Write(const char* level, const char* file, int line, const char* fmt, ...);
 }
@@ -15,8 +18,10 @@ namespace Log {
 
 #else
 
+#include <string>
+
 namespace Log {
-    inline void Init() {}
+    inline void Init(const std::string&) {}
     inline void Shutdown() {}
 }
 

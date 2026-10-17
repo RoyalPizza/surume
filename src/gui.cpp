@@ -1,5 +1,4 @@
-#include "ui.hpp"
-#include "app.hpp"
+#include "gui.hpp"
 #include "git.hpp"
 #include "log.hpp"
 #include "imgui.h"
@@ -130,7 +129,7 @@ static void RenderNewBranchModal(AppState& state) {
         if (r.Ok()) {
             LOG_INFO("NewBranchModal: success");
             state.statusMessage.clear();
-            App::RefreshRepoState(state);
+            Git::RefreshRepoState(state);
         } else {
             LOG_ERROR("NewBranchModal: failed — %s", r.err.c_str());
             state.statusMessage = "Could not create branch: " + r.err;
@@ -192,7 +191,7 @@ static void RenderDeleteBranchModal(AppState& state) {
         if (r.Ok()) {
             LOG_INFO("DeleteBranchModal: success");
             state.statusMessage.clear();
-            App::RefreshRepoState(state);
+            Git::RefreshRepoState(state);
         } else {
             LOG_ERROR("DeleteBranchModal: failed — %s", r.err.c_str());
             state.statusMessage = "Could not delete branch: " + r.err;
@@ -214,7 +213,7 @@ static void RenderDeleteBranchModal(AppState& state) {
 // -------------------------------------------------------------------------
 // Menu bar
 // -------------------------------------------------------------------------
-static void RenderMenuBar(AppState& state, PlatformContext& ctx) {
+static void RenderMenuBar(AppState& state) {
     if (!ImGui::BeginMainMenuBar()) return;
 
     bool hasRepo = !state.activeRepo.empty();
@@ -257,11 +256,11 @@ static void RenderMenuBar(AppState& state, PlatformContext& ctx) {
     if (ImGui::BeginMenu("Repository")) {
         if (ImGui::MenuItem("Open in Explorer", nullptr, false, hasRepo)) {
             LOG_INFO("Menu: Repository > Open in Explorer");
-            Platform::OpenInExplorer(state.activeRepo);
+            state.requestOpenInExplorer = true;
         }
         if (ImGui::MenuItem("Open in Terminal", nullptr, false, hasRepo)) {
             LOG_INFO("Menu: Repository > Open in Terminal");
-            Platform::OpenInTerminal(ctx.hwnd, state.activeRepo);
+            state.requestOpenInTerminal = true;
         }
         ImGui::Separator();
         if (ImGui::MenuItem("Settings...")) {
@@ -297,7 +296,7 @@ static void RenderMenuBar(AppState& state, PlatformContext& ctx) {
 // -------------------------------------------------------------------------
 // Header bar
 // -------------------------------------------------------------------------
-static void RenderHeaderBar(AppState& state, PlatformContext& ctx) {
+static void RenderHeaderBar(AppState& state) {
     bool  hasRepo = !state.activeRepo.empty();
     float btnH    = ImGui::GetFrameHeight();
     float padY    = (kHeaderHeight - btnH) * 0.5f;
@@ -379,7 +378,7 @@ static void RenderHeaderBar(AppState& state, PlatformContext& ctx) {
                         if (r.Ok()) {
                             LOG_INFO("BranchPicker: checkout succeeded");
                             state.statusMessage.clear();
-                            App::RefreshRepoState(state);
+                            Git::RefreshRepoState(state);
                         } else {
                             LOG_ERROR("BranchPicker: checkout failed — %s", r.err.c_str());
                             state.statusMessage = "Checkout failed: " + r.err;
@@ -519,7 +518,7 @@ static void RenderChangesTab(AppState& state) {
             s_summary[0] = '\0';
             s_desc[0]    = '\0';
             state.statusMessage.clear();
-            App::RefreshRepoState(state);
+            Git::RefreshRepoState(state);
         } else {
             LOG_ERROR("Commit failed — %s", r.err.c_str());
             state.statusMessage = "Commit failed: " + r.err;
@@ -584,7 +583,7 @@ static void RenderHistoryTab(AppState& state) {
 // -------------------------------------------------------------------------
 // Left column
 // -------------------------------------------------------------------------
-static void RenderLeftColumn(AppState& state, PlatformContext& ctx) {
+static void RenderLeftColumn(AppState& state) {
     static NavMode s_lastMode = NavMode::Changes;
 
     if (ImGui::BeginTabBar("##navtabs")) {
@@ -679,7 +678,7 @@ static void RenderDiff(const std::string& diff) {
     ImGui::EndChild();
 }
 
-static void RenderRightContent(AppState& state, PlatformContext& ctx) {
+static void RenderRightContent(AppState& state) {
     ImVec2 avail = ImGui::GetContentRegionAvail();
 
     if (state.activeRepo.empty()) {
@@ -735,10 +734,10 @@ static void RenderSplitter(AppState& state, float height) {
 // -------------------------------------------------------------------------
 // Main entry point
 // -------------------------------------------------------------------------
-void Ui::Render(AppState& state, PlatformContext& ctx) {
+void Gui::Render(AppState& state) {
     static bool s_firstFrame = true;
     if (s_firstFrame) {
-        LOG_INFO("Ui::Render — first frame, display=%.0fx%.0f",
+        LOG_INFO("Gui::Render — first frame, display=%.0fx%.0f",
             ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y);
         s_firstFrame = false;
     }
@@ -754,7 +753,7 @@ void Ui::Render(AppState& state, PlatformContext& ctx) {
     RenderNewBranchModal(state);
     RenderDeleteBranchModal(state);
 
-    RenderMenuBar(state, ctx);
+    RenderMenuBar(state);
 
     ImGuiIO& io    = ImGui::GetIO();
     float menuH    = ImGui::GetFrameHeight();
@@ -779,13 +778,13 @@ void Ui::Render(AppState& state, PlatformContext& ctx) {
     ImGui::Begin("##main", nullptr, kMainFlags);
     ImGui::PopStyleVar(3);
 
-    RenderHeaderBar(state, ctx);
+    RenderHeaderBar(state);
 
     ImGui::SetCursorPos(ImVec2(0, kHeaderHeight));
 
     ImGui::BeginChild("##leftcol", ImVec2(leftW, contentH), false,
         ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-    RenderLeftColumn(state, ctx);
+    RenderLeftColumn(state);
     ImGui::EndChild();
 
     ImGui::SameLine(0, 0);
@@ -793,7 +792,7 @@ void Ui::Render(AppState& state, PlatformContext& ctx) {
     ImGui::SameLine(0, 0);
 
     ImGui::BeginChild("##rightcol", ImVec2(rightW, contentH), false);
-    RenderRightContent(state, ctx);
+    RenderRightContent(state);
     ImGui::EndChild();
 
     ImGui::End();

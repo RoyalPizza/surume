@@ -111,8 +111,8 @@ GitResult Git::Run(const std::string& repoPath, std::vector<std::string> args) {
     return result;
 }
 
-std::string Git::FindExecutable() {
-    LOG_INFO("Git::FindExecutable");
+std::string Git::FindGitExecutable() {
+    LOG_INFO("Git::FindGitExecutable");
     GitResult r = Run("", { "--version" });
     if (r.Ok()) {
         LOG_INFO("Git found in PATH: %s", Trim(r.out).c_str());
@@ -363,4 +363,17 @@ std::vector<CommitInfo> Git::GetLog(const std::string& repoPath, int maxCount) {
 
     LOG_INFO("Git::GetLog returned %d commits", (int)result.size());
     return result;
+}
+
+void Git::RefreshRepoState(AppState& state) {
+    if (state.activeRepo.empty()) return;
+    LOG_INFO("Git::RefreshRepoState repo='%s'", state.activeRepo.c_str());
+    state.currentBranch   = GetCurrentBranch(state.activeRepo);
+    state.branches        = GetBranches(state.activeRepo);
+    state.changedFiles    = GetStatus(state.activeRepo);
+    state.commits         = GetLog(state.activeRepo);
+    state.selectedFileIdx = -1;
+    state.currentDiff.clear();
+    LOG_INFO("Git::RefreshRepoState done — branch='%s' branches=%d commits=%d",
+        state.currentBranch.c_str(), (int)state.branches.size(), (int)state.commits.size());
 }
