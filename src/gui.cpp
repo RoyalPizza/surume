@@ -98,7 +98,7 @@ static char settings_open_directory[SETTINGS_PATH_SIZE] = {};
 static bool settings_is_auto_fetch_enabled = false;
 static int settings_auto_fetch_minutes = 15;
 static bool is_settings_loaded = false;
-static NavMode last_nav_mode = NavMode::CHANGES;
+static NavMode shown_nav_mode = NavMode::CHANGES;
 static bool is_first_frame = true;
 
 // -------------------------------------------------------------------------
@@ -830,19 +830,13 @@ static void render_changes_tab(AppState& state)
 // History tab
 // -------------------------------------------------------------------------
 
-static void render_commit_row(const CommitInfo& commit, float width, float date_width)
+// Two fixed-height lines: the subject, then hash, author and date. Nothing is right-aligned,
+// so long relative dates ("2 years, 3 months ago") can't overlap other text.
+static void render_commit_row(const CommitInfo& commit)
 {
-    float padding_x = ImGui::GetStyle().ItemSpacing.x;
-
-    ImGui::TextDisabled("%s", commit.hash.c_str());
-    ImGui::SameLine(width - date_width);
-    ImGui::TextDisabled("%s", commit.date.c_str());
-
-    ImGui::PushTextWrapPos(width - padding_x);
     ImGui::TextUnformatted(commit.subject.c_str());
-    ImGui::PopTextWrapPos();
-
-    ImGui::TextDisabled("%s", commit.author.c_str());
+    ImGui::TextDisabled("%s  %s, %s", commit.hash.c_str(), commit.author.c_str(),
+        commit.date.c_str());
     ImGui::Separator();
 }
 
@@ -862,13 +856,10 @@ static void render_history_tab(const AppState& state)
         return;
     }
 
-    float width = ImGui::GetContentRegionAvail().x;
-    float date_width = ImGui::CalcTextSize("12 months ago").x +
-        ImGui::GetStyle().ItemSpacing.x * 2;
     for (int i = 0; i < (int)state.commits.size(); ++i)
     {
         ImGui::PushID(i);
-        render_commit_row(state.commits[i], width, date_width);
+        render_commit_row(state.commits[i]);
         ImGui::PopID();
     }
 
@@ -879,23 +870,23 @@ static void render_history_tab(const AppState& state)
 // Left column
 // -------------------------------------------------------------------------
 
-static void log_tab_switch(NavMode mode)
+// Tab flags that force the tab for state.nav_mode open when it differs from the tab shown
+// last frame (the View menu or a shortcut changed it).
+static ImGuiTabItemFlags tab_flags(const AppState& state, NavMode tab)
 {
-    if (last_nav_mode == mode)
-    {
-        return;
-    }
+    bool is_forced = state.nav_mode != shown_nav_mode && state.nav_mode == tab;
+    return is_forced ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
+}
 
-    last_nav_mode = mode;
-    switch (mode)
+// Record that tab is the one ImGui is showing. A click on a tab updates state.nav_mode; a
+// pending forced switch wins until ImGui has applied it.
+static void on_tab_shown(AppState& state, NavMode tab)
+{
+    if (state.nav_mode == shown_nav_mode)
     {
-        case NavMode::CHANGES:
-            LOG_INFO("Tab: switched to Changes");
-            break;
-        case NavMode::HISTORY:
-            LOG_INFO("Tab: switched to History");
-            break;
+        state.nav_mode = tab;
     }
+    shown_nav_mode = tab;
 }
 
 static void render_left_column(AppState& state)
@@ -905,15 +896,15 @@ static void render_left_column(AppState& state)
         return;
     }
 
-    if (ImGui::BeginTabItem("Changes"))
+    if (ImGui::BeginTabItem("Changes", nullptr, tab_flags(state, NavMode::CHANGES)))
     {
-        log_tab_switch(NavMode::CHANGES);
+        on_tab_shown(state, NavMode::CHANGES);
         render_changes_tab(state);
         ImGui::EndTabItem();
     }
-    if (ImGui::BeginTabItem("History"))
+    if (ImGui::BeginTabItem("History", nullptr, tab_flags(state, NavMode::HISTORY)))
     {
-        log_tab_switch(NavMode::HISTORY);
+        on_tab_shown(state, NavMode::HISTORY);
         render_history_tab(state);
         ImGui::EndTabItem();
     }
