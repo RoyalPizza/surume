@@ -511,6 +511,42 @@ static void test_amend(const std::string& root)
         "pushed commit is reported as pushed");
 }
 
+static void test_stash(const std::string& root)
+{
+    std::string repo = create_repo(root, "stash");
+    commit_file(repo, "base\n", "base");
+
+    write_file(repo + "\\a.txt", "changed\n");
+    write_file(repo + "\\new.txt", "untracked\n");
+    GitResult result;
+    check(git_stash_push(repo, result), "stash push with tracked and untracked changes");
+
+    std::vector<FileStatus> files;
+    git_get_status(repo, files);
+    check(files.empty(), "working tree clean after stashing");
+
+    std::vector<StashInfo> stashes;
+    check(git_get_stashes(repo, stashes) && stashes.size() == 1 &&
+        stashes[0].ref == "stash@{0}" && stashes[0].branch == "main",
+        "stash listed with its branch");
+
+    std::string diff;
+    check(git_get_stash_diff(repo, "stash@{0}", diff) &&
+        diff.find("+changed") != std::string::npos, "stash diff shows the tracked change");
+    printf("      (stash diff %s untracked files)\n",
+        diff.find("new.txt") != std::string::npos ? "includes" : "omits, old git:");
+
+    check(git_stash_pop(repo, "stash@{0}", result), "stash pop");
+    git_get_status(repo, files);
+    check(files.size() == 2 && git_get_stashes(repo, stashes) && stashes.empty(),
+        "changes back and stash gone after pop");
+
+    check(git_stash_push(repo, result) && git_stash_drop(repo, "stash@{0}", result) &&
+        git_get_stashes(repo, stashes) && stashes.empty(), "stash drop");
+
+    check(!git_stash_push(repo, result), "nothing to stash is reported as a failure");
+}
+
 static void test_persistence(const std::string& root)
 {
     std::string dir = root + "\\app data \xC3\xBC\\"; // "ü"
@@ -536,6 +572,12 @@ static void test_persistence(const std::string& root)
     AppState reloaded;
     persistence_load(reloaded, dir);
     check_equal(reloaded.restore_repo, unopened.restore_repo, "unopened repo stays remembered");
+
+    // A byte order mark (Notepad, PowerShell 5) must not swallow the first key
+    write_file(dir + "repositories.toml", "\xEF\xBB\xBF" "active = \"C:\\\\bom\"\nrepos = []\n");
+    AppState with_bom;
+    persistence_load(with_bom, dir);
+    check_equal(with_bom.restore_repo, "C:\\bom", "settings file with a BOM loads its first key");
     check(loaded.recent_repos == saved.recent_repos, "recent repos round-trip");
     check(loaded.left_column_width == 333.0f, "column width round-trips");
     check_equal(loaded.settings.git_path, saved.settings.git_path, "git path round-trips");
@@ -569,6 +611,7 @@ int main()
     test_commit_details(root);
     test_discard(root);
     test_amend(root);
+    test_stash(root);
     test_persistence(root);
 
     delete_tree(root);

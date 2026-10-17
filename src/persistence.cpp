@@ -11,6 +11,9 @@
 #include <string>
 
 constexpr int WIDE_PATH_SIZE = MAX_PATH * 2;
+constexpr size_t READ_CHUNK_SIZE = 4096;
+constexpr const char* UTF8_BOM = "\xEF\xBB\xBF";
+constexpr size_t UTF8_BOM_SIZE = 3;
 
 // Open a file by UTF-8 path. The narrow CRT functions use the ANSI code page, which breaks
 // on user folders with non-ASCII names. Returns nullptr on failure.
@@ -30,18 +33,29 @@ static FILE* open_file(const std::string& path, const wchar_t* mode)
     return file;
 }
 
-// Parse a TOML file. Returns false if it is missing or invalid; toml must still be freed.
+// Parse a TOML file. A UTF-8 byte order mark (Notepad, PowerShell 5) is skipped; otherwise it
+// becomes part of the first key's name. Returns false if the file is missing or invalid;
+// toml must still be freed.
 static bool parse_toml_file(const std::string& path, toml_result_t& toml)
 {
+    toml = {};
     FILE* file = open_file(path, L"rb");
     if (file == nullptr)
     {
-        toml = {};
         return false;
     }
 
-    toml = toml_parse_file(file);
+    std::string text;
+    char buf[READ_CHUNK_SIZE];
+    size_t read_count = 0;
+    while ((read_count = fread(buf, 1, sizeof(buf), file)) > 0)
+    {
+        text.append(buf, read_count);
+    }
     fclose(file);
+
+    size_t start = text.compare(0, UTF8_BOM_SIZE, UTF8_BOM) == 0 ? UTF8_BOM_SIZE : 0;
+    toml = toml_parse(text.c_str() + start, (int)(text.size() - start));
     return toml.ok;
 }
 

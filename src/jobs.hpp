@@ -20,6 +20,11 @@ enum class JobKind
     CREATE_BRANCH,   // text: branch name
     DELETE_BRANCH,   // text: branch name
     DISCARD,         // files: the changes to throw away
+    STASH,
+    STASH_AND_CHECKOUT, // text: branch name, flag: is a remote branch
+    STASH_POP,       // text: stash ref
+    STASH_DROP,      // text: stash ref
+    LOAD_STASH_DIFF, // text: stash ref
 };
 
 struct Job

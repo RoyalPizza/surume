@@ -30,6 +30,10 @@ static bool is_mutation(JobKind kind)
         case JobKind::CREATE_BRANCH:
         case JobKind::DELETE_BRANCH:
         case JobKind::DISCARD:
+        case JobKind::STASH:
+        case JobKind::STASH_AND_CHECKOUT:
+        case JobKind::STASH_POP:
+        case JobKind::STASH_DROP:
             return true;
         case JobKind::FIND_GIT:
         case JobKind::OPEN_REPO:
@@ -38,6 +42,7 @@ static bool is_mutation(JobKind kind)
         case JobKind::LOAD_COMMIT:
         case JobKind::LOAD_COMMIT_DIFF:
         case JobKind::LOAD_LAST_COMMIT:
+        case JobKind::LOAD_STASH_DIFF:
             return false;
     }
     return false;
@@ -69,6 +74,15 @@ static const char* job_label(JobKind kind)
             return "Deleting branch";
         case JobKind::DISCARD:
             return "Discarding changes";
+        case JobKind::STASH:
+        case JobKind::STASH_AND_CHECKOUT:
+            return "Stashing";
+        case JobKind::STASH_POP:
+            return "Restoring stash";
+        case JobKind::STASH_DROP:
+            return "Discarding stash";
+        case JobKind::LOAD_STASH_DIFF:
+            return "Loading stash";
     }
     return "Working";
 }
@@ -191,6 +205,40 @@ static void run_job(const Job& job, JobResult& result)
             finish_mutation(job, is_success, git_result, result);
             break;
         }
+
+        case JobKind::STASH:
+        {
+            bool is_success = git_stash_push(job.repo_path, git_result);
+            finish_mutation(job, is_success, git_result, result);
+            break;
+        }
+
+        case JobKind::STASH_AND_CHECKOUT:
+        {
+            bool is_success = git_stash_push(job.repo_path, git_result) &&
+                git_checkout_branch(job.repo_path, job.text, job.flag, git_result);
+            finish_mutation(job, is_success, git_result, result);
+            break;
+        }
+
+        case JobKind::STASH_POP:
+        {
+            bool is_success = git_stash_pop(job.repo_path, job.text, git_result);
+            finish_mutation(job, is_success, git_result, result);
+            break;
+        }
+
+        case JobKind::STASH_DROP:
+        {
+            bool is_success = git_stash_drop(job.repo_path, job.text, git_result);
+            finish_mutation(job, is_success, git_result, result);
+            break;
+        }
+
+        case JobKind::LOAD_STASH_DIFF:
+            result.diff_path = job.text;
+            result.is_success = git_get_stash_diff(job.repo_path, job.text, result.diff);
+            break;
     }
 }
 

@@ -73,6 +73,13 @@ struct CommitInfo
     std::string subject;   // first line of the message
 };
 
+struct StashInfo
+{
+    std::string ref;     // "stash@{0}"
+    std::string subject; // "On main: message" or "WIP on main: abc123 subject"
+    std::string branch;  // branch it was made on, parsed from the subject
+};
+
 // Everything shown for one commit in History. files use index_status for the change letter.
 struct CommitDetails
 {
@@ -109,6 +116,7 @@ struct RepoSnapshot
     std::vector<BranchInfo> branches;
     std::vector<FileStatus> files;
     std::vector<CommitInfo> commits;
+    std::vector<StashInfo> stashes;
 };
 
 // What the GUI asks for. main.cpp turns requests into jobs, dialogs or shell actions after
@@ -130,6 +138,11 @@ enum class RequestKind
     DELETE_BRANCH,    // text: branch name
     DISCARD,          // text: file path; empty discards every change
     SHOW_IN_EXPLORER, // text: file path inside the repository
+    STASH,            // stash every change
+    STASH_AND_CHECKOUT, // text: branch name, flag: is a remote branch
+    STASH_POP,        // text: stash ref
+    STASH_DROP,       // text: stash ref
+    LOAD_STASH_DIFF,  // uses selected_stash_ref
     SAVE_SETTINGS,
     EXIT,
 };
@@ -164,6 +177,8 @@ struct AppState
     char file_filter[FILE_FILTER_SIZE] = {}; // case-insensitive path filter for the file list
     std::string selected_file_path; // empty when no file is selected
     DiffView diff;                  // diff of selected_file_path, once loaded
+    std::string selected_stash_ref; // the "Stashed changes" row, when selected instead of a file
+    DiffView stash_diff;
 
     // History view
     std::string selected_commit_hash; // full hash; empty when no commit is selected

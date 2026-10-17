@@ -697,10 +697,33 @@ static void set_commit_text(AppState& state, const std::string& message)
         sizeof(state.commit_description) - 1);
 }
 
+// Keep the selected stash if it still exists (reload its diff; refs shift as stashes come and
+// go), otherwise clear it.
+static void keep_stash_selection(AppState& state)
+{
+    if (state.selected_stash_ref.empty())
+    {
+        return;
+    }
+    for (const StashInfo& stash : state.repo.stashes)
+    {
+        if (stash.ref == state.selected_stash_ref)
+        {
+            Job job = make_job(state, JobKind::LOAD_STASH_DIFF);
+            job.text = stash.ref;
+            jobs_push(job);
+            return;
+        }
+    }
+    state.selected_stash_ref.clear();
+    clear_diff(state.stash_diff);
+}
+
 static void apply_snapshot(AppState& state, const RepoSnapshot& snapshot)
 {
     state.repo = snapshot;
     prune_unticked(state);
+    keep_stash_selection(state);
     if (state.selected_file_path.empty())
     {
         return;
@@ -733,6 +756,8 @@ static void apply_open_repo(AppState& state, const JobResult& result)
     clear_diff(state.diff);
     state.status_message.clear();
     state.unticked_paths.clear();
+    state.selected_stash_ref.clear();
+    clear_diff(state.stash_diff);
     state.is_amend = false;
     state.is_last_commit_pushed = false;
     clear_history_selection(state);
@@ -757,6 +782,16 @@ static const char* failure_prefix(JobKind kind)
             return "Could not delete branch: ";
         case JobKind::DISCARD:
             return "Could not discard changes: ";
+        case JobKind::STASH:
+            return "Could not stash: ";
+        case JobKind::STASH_AND_CHECKOUT:
+            return "Could not stash and switch: ";
+        case JobKind::STASH_POP:
+            return "Could not restore the stash: ";
+        case JobKind::STASH_DROP:
+            return "Could not discard the stash: ";
+        case JobKind::LOAD_STASH_DIFF:
+            return "";
         case JobKind::FIND_GIT:
         case JobKind::OPEN_REPO:
         case JobKind::REFRESH:
@@ -809,6 +844,11 @@ static void apply_result(AppState& state, const JobResult& result)
         case JobKind::CREATE_BRANCH:
         case JobKind::DELETE_BRANCH:
         case JobKind::DISCARD:
+        case JobKind::STASH:
+        case JobKind::STASH_AND_CHECKOUT:
+        case JobKind::STASH_POP:
+        case JobKind::STASH_DROP:
+        case JobKind::LOAD_STASH_DIFF:
             break;
     }
 
@@ -832,6 +872,14 @@ static void apply_result(AppState& state, const JobResult& result)
         if (result.commit_hash == state.selected_commit_hash)
         {
             state.commit_details = result.is_success ? result.commit_details : CommitDetails{};
+        }
+        return;
+    }
+    if (result.kind == JobKind::LOAD_STASH_DIFF)
+    {
+        if (result.diff_path == state.selected_stash_ref)
+        {
+            set_diff(state.stash_diff, result.is_success ? result.diff : "");
         }
         return;
     }
@@ -1050,6 +1098,30 @@ static void handle_request(AppState& state, const Request& request, Window& wind
         case RequestKind::DISCARD:
             queue_discard(state, request.text);
             break;
+
+        case RequestKind::STASH:
+            queue_repo_job(state, request, JobKind::STASH);
+            break;
+
+        case RequestKind::STASH_AND_CHECKOUT:
+            queue_repo_job(state, request, JobKind::STASH_AND_CHECKOUT);
+            break;
+
+        case RequestKind::STASH_POP:
+            queue_repo_job(state, request, JobKind::STASH_POP);
+            break;
+
+        case RequestKind::STASH_DROP:
+            queue_repo_job(state, request, JobKind::STASH_DROP);
+            break;
+
+        case RequestKind::LOAD_STASH_DIFF:
+        {
+            Request stash_request = request;
+            stash_request.text = state.selected_stash_ref;
+            queue_repo_job(state, stash_request, JobKind::LOAD_STASH_DIFF);
+            break;
+        }
 
         case RequestKind::SHOW_IN_EXPLORER:
             show_in_explorer(state.active_repo + "\\" + request.text);

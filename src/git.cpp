@@ -150,6 +150,11 @@ static std::string resolve_path(const std::string& path)
     return to_utf8(start);
 }
 
+static bool starts_with(const std::string& text, const char* prefix)
+{
+    return text.compare(0, strlen(prefix), prefix) == 0;
+}
+
 static std::string to_backslashes(std::string path)
 {
     for (char& c : path)
@@ -639,6 +644,91 @@ bool git_discard(const std::string& repo_path, const std::vector<FileStatus>& fi
     return true;
 }
 
+bool git_stash_push(const std::string& repo_path, GitResult& result)
+{
+    if (!git_run(repo_path, { "stash", "push", "--include-untracked" }, result))
+    {
+        return false;
+    }
+
+    // git exits 0 with this message when there is nothing to stash
+    if (starts_with(trim_end(result.output), "No local changes to save"))
+    {
+        result.error_output = trim_end(result.output);
+        result.exit_code = 1;
+        return false;
+    }
+    return true;
+}
+
+// "On main: msg" or "WIP on main: abc subject" -> "main"; empty if neither.
+static std::string stash_branch(const std::string& subject)
+{
+    size_t start = 0;
+    if (starts_with(subject, "On "))
+    {
+        start = strlen("On ");
+    }
+    else if (starts_with(subject, "WIP on "))
+    {
+        start = strlen("WIP on ");
+    }
+    else
+    {
+        return "";
+    }
+    size_t colon = subject.find(':', start);
+    return colon == std::string::npos ? "" : subject.substr(start, colon - start);
+}
+
+bool git_get_stashes(const std::string& repo_path, std::vector<StashInfo>& stashes)
+{
+    stashes.clear();
+    GitResult result;
+    if (!git_run(repo_path, { "stash", "list", "--format=%gd%x1f%s" }, result))
+    {
+        return false;
+    }
+
+    for (const std::string& line : split(result.output, '\n'))
+    {
+        std::vector<std::string> fields = split(line, LOG_FIELD_SEPARATOR);
+        if (fields.size() < 2)
+        {
+            continue;
+        }
+        StashInfo stash;
+        stash.ref = fields[0];
+        stash.subject = fields[1];
+        stash.branch = stash_branch(stash.subject);
+        stashes.push_back(stash);
+    }
+    return true;
+}
+
+bool git_get_stash_diff(const std::string& repo_path, const std::string& ref, std::string& diff)
+{
+    // --include-untracked needs git 2.32; fall back to tracked changes only
+    GitResult result;
+    if (!git_run(repo_path, { "stash", "show", "-p", "--include-untracked", ref }, result) &&
+        !git_run(repo_path, { "stash", "show", "-p", ref }, result))
+    {
+        return false;
+    }
+    diff = result.output;
+    return !diff.empty();
+}
+
+bool git_stash_pop(const std::string& repo_path, const std::string& ref, GitResult& result)
+{
+    return git_run(repo_path, { "stash", "pop", ref }, result);
+}
+
+bool git_stash_drop(const std::string& repo_path, const std::string& ref, GitResult& result)
+{
+    return git_run(repo_path, { "stash", "drop", ref }, result);
+}
+
 bool git_get_log(const std::string& repo_path, std::vector<CommitInfo>& commits)
 {
     commits.clear();
@@ -757,11 +847,6 @@ bool git_get_commit_file_diff(const std::string& repo_path, const std::string& h
     }
     diff = result.output;
     return true;
-}
-
-static bool starts_with(const std::string& text, const char* prefix)
-{
-    return text.compare(0, strlen(prefix), prefix) == 0;
 }
 
 // The text after the first count space-separated fields. Returns false if there are fewer.
@@ -1019,6 +1104,10 @@ bool git_load_snapshot(const std::string& repo_path, RepoSnapshot& snapshot)
     if (!git_get_log(repo_path, snapshot.commits))
     {
         snapshot.commits.clear(); // normal for a repository with no commits yet
+    }
+    if (!git_get_stashes(repo_path, snapshot.stashes))
+    {
+        snapshot.stashes.clear();
     }
 
     LOG_INFO("git_load_snapshot: branch='%s' upstream='%s' +%d -%d branches=%d files=%d "

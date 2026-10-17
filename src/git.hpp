@@ -67,6 +67,23 @@ bool git_get_last_commit(const std::string& repo_path, std::string& message, boo
 bool git_discard(const std::string& repo_path, const std::vector<FileStatus>& files,
     GitResult& result);
 
+// Stash every change, including untracked files. Returns false on failure (including when
+// there is nothing to stash).
+bool git_stash_push(const std::string& repo_path, GitResult& result);
+
+// List stashes, newest first, with the branch each was made on. Returns false on error.
+bool git_get_stashes(const std::string& repo_path, std::vector<StashInfo>& stashes);
+
+// Build the diff a stash would apply, including its untracked files where git supports it.
+// Returns false if git produced none.
+bool git_get_stash_diff(const std::string& repo_path, const std::string& ref, std::string& diff);
+
+// Apply a stash and drop it. Returns false on failure; on conflicts the stash is kept.
+bool git_stash_pop(const std::string& repo_path, const std::string& ref, GitResult& result);
+
+// Delete a stash without applying it. Returns false on failure.
+bool git_stash_drop(const std::string& repo_path, const std::string& ref, GitResult& result);
+
 // Read recent commits on the current branch, newest first. Returns false on error
 // (including a repository with no commits yet).
 bool git_get_log(const std::string& repo_path, std::vector<CommitInfo>& commits);

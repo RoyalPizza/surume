@@ -96,6 +96,9 @@ static int settings_auto_fetch_minutes = 15;
 static bool is_settings_loaded = false;
 static std::string pending_discard_path; // empty means every change
 static bool is_discard_modal_requested = false;
+static BranchInfo pending_checkout;         // branch to switch to after the stash prompt
+static bool is_switch_modal_requested = false;
+static bool is_drop_stash_modal_requested = false;
 static NavMode shown_nav_mode = NavMode::CHANGES;
 static bool should_scroll_to_selection = false; // set by arrow keys; the row scrolls into view
 static std::vector<int> visible_files;          // filtered file indices, rebuilt every frame
@@ -399,9 +402,85 @@ static void render_discard_modal(AppState& state)
     ImGui::EndPopup();
 }
 
+static void request_checkout(AppState& state, const BranchInfo& branch, RequestKind kind)
+{
+    Request checkout;
+    checkout.kind = kind;
+    checkout.text = branch.name;
+    checkout.flag = branch.location == BranchLocation::REMOTE;
+    state.requests.push_back(checkout);
+}
+
+// Switching branches with uncommitted changes: stash them first, or let git try anyway.
+static void render_switch_modal(AppState& state)
+{
+    ImGui::SetNextWindowSize(ImVec2(scaled(BRANCH_MODAL_WIDTH), 0), ImGuiCond_Always);
+    if (!ImGui::BeginPopupModal("Switch Branch", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        return;
+    }
+
+    ImGui::TextWrapped("You have %d uncommitted change%s. Stash them before switching to %s?",
+        (int)state.repo.files.size(), state.repo.files.size() == 1 ? "" : "s",
+        pending_checkout.name.c_str());
+    ImGui::TextDisabled("Switching anyway carries them over, or fails if they conflict.");
+    ImGui::Spacing();
+    float width = scaled(DIALOG_BUTTON_WIDTH) * 1.3f;
+    if (ImGui::Button("Stash and switch", ImVec2(width, 0)))
+    {
+        request_checkout(state, pending_checkout, RequestKind::STASH_AND_CHECKOUT);
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Switch anyway", ImVec2(width, 0)))
+    {
+        request_checkout(state, pending_checkout, RequestKind::CHECKOUT_BRANCH);
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(scaled(DIALOG_BUTTON_WIDTH), 0)) ||
+        ImGui::IsKeyPressed(ImGuiKey_Escape))
+    {
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
+static void render_drop_stash_modal(AppState& state)
+{
+    if (!ImGui::BeginPopupModal("Discard Stash", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        return;
+    }
+    ImGui::TextUnformatted("Discard the stashed changes? This can't be undone.");
+    ImGui::Spacing();
+    if (ImGui::Button("Discard", ImVec2(scaled(DIALOG_BUTTON_WIDTH), 0)))
+    {
+        request_text(state, RequestKind::STASH_DROP, state.selected_stash_ref);
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(scaled(DIALOG_BUTTON_WIDTH), 0)) ||
+        ImGui::IsKeyPressed(ImGuiKey_Escape))
+    {
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
 // Open any modals the GUI requested last frame. Must run before the modals are drawn.
 static void open_requested_modals(AppState& state)
 {
+    if (is_switch_modal_requested)
+    {
+        ImGui::OpenPopup("Switch Branch");
+        is_switch_modal_requested = false;
+    }
+    if (is_drop_stash_modal_requested)
+    {
+        ImGui::OpenPopup("Discard Stash");
+        is_drop_stash_modal_requested = false;
+    }
     if (is_discard_modal_requested)
     {
         ImGui::OpenPopup("Discard Changes");
@@ -537,6 +616,12 @@ static void render_branch_menu(AppState& state)
     {
         state.is_delete_branch_modal_requested = true;
     }
+    ImGui::Separator();
+    bool can_stash = has_repo && !state.repo.files.empty() && !state.is_mutation_running;
+    if (ImGui::MenuItem("Stash all changes", nullptr, false, can_stash))
+    {
+        request(state, RequestKind::STASH);
+    }
     ImGui::EndMenu();
 }
 
@@ -646,6 +731,12 @@ static const char* branch_marker(const BranchInfo& branch)
 
 static void checkout_branch(AppState& state, const BranchInfo& branch)
 {
+    if (!state.repo.files.empty())
+    {
+        pending_checkout = branch;
+        is_switch_modal_requested = true;
+        return;
+    }
     LOG_INFO("BranchPicker: checking out '%s'", branch.name.c_str());
     Request checkout;
     checkout.kind = RequestKind::CHECKOUT_BRANCH;
@@ -880,6 +971,8 @@ static void select_file(AppState& state, const FileStatus& file)
 {
     state.selected_file_path = file.path;
     state.diff = {};
+    state.selected_stash_ref.clear();
+    state.stash_diff = {};
     request(state, RequestKind::LOAD_DIFF);
 }
 
@@ -1061,6 +1154,43 @@ static void render_conflict_banner(const AppState& state)
     }
 }
 
+// The newest stash made on the current branch, or nullptr.
+static const StashInfo* current_branch_stash(const AppState& state)
+{
+    for (const StashInfo& stash : state.repo.stashes)
+    {
+        if (stash.branch == state.repo.head.name)
+        {
+            return &stash;
+        }
+    }
+    return nullptr;
+}
+
+static void render_stash_row(AppState& state)
+{
+    const StashInfo* stash = current_branch_stash(state);
+    if (stash == nullptr)
+    {
+        return;
+    }
+
+    ImGui::Separator();
+    bool is_selected = state.selected_stash_ref == stash->ref;
+    if (ImGui::Selectable("Stashed changes", is_selected) && !is_selected)
+    {
+        state.selected_stash_ref = stash->ref;
+        state.stash_diff = {};
+        state.selected_file_path.clear();
+        state.diff = {};
+        request(state, RequestKind::LOAD_STASH_DIFF);
+    }
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("%s", stash->subject.c_str());
+    }
+}
+
 static void render_file_list(AppState& state)
 {
     if (state.active_repo.empty())
@@ -1070,6 +1200,7 @@ static void render_file_list(AppState& state)
     if (state.repo.files.empty())
     {
         ImGui::TextDisabled("No local changes");
+        render_stash_row(state);
         return;
     }
     render_conflict_banner(state);
@@ -1110,6 +1241,7 @@ static void render_file_list(AppState& state)
             ImGui::PopID();
         }
     }
+    render_stash_row(state);
 }
 
 static void commit(AppState& state)
@@ -1590,6 +1722,28 @@ static void render_commit_pane(AppState& state, ImVec2 available)
     render_diff_or_placeholder(state.commit_diff, diff_area, "##commitdiff");
 }
 
+// Restore / Discard buttons over the stash's diff.
+static void render_stash_pane(AppState& state)
+{
+    ImGui::BeginDisabled(state.is_mutation_running);
+    if (ImGui::Button("Restore", ImVec2(scaled(DIALOG_BUTTON_WIDTH), 0)))
+    {
+        request_text(state, RequestKind::STASH_POP, state.selected_stash_ref);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Discard...", ImVec2(scaled(DIALOG_BUTTON_WIDTH), 0)))
+    {
+        is_drop_stash_modal_requested = true;
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextDisabled("Stashed changes");
+    ImGui::Separator();
+    render_diff_or_placeholder(state.stash_diff, ImGui::GetContentRegionAvail(),
+        "##stashdiff");
+}
+
 static void render_right_content(AppState& state)
 {
     ImVec2 available = ImGui::GetContentRegionAvail();
@@ -1609,6 +1763,10 @@ static void render_right_content(AppState& state)
         {
             render_commit_pane(state, available);
         }
+    }
+    else if (!state.selected_stash_ref.empty())
+    {
+        render_stash_pane(state);
     }
     else if (state.selected_file_path.empty())
     {
@@ -1707,6 +1865,8 @@ void gui_render(AppState& state)
     render_new_branch_modal(state);
     render_delete_branch_modal(state);
     render_discard_modal(state);
+    render_switch_modal(state);
+    render_drop_stash_modal(state);
 
     render_menu_bar(state);
 
