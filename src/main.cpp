@@ -12,6 +12,7 @@
 #define NOMINMAX
 #include <windows.h>
 #include <d3d11.h>
+#include <dwmapi.h>
 #include <dxgi.h>
 #include <shellapi.h>
 #include <shlobj.h>
@@ -31,7 +32,6 @@ constexpr int INITIAL_WIDTH = 1280;
 constexpr int INITIAL_HEIGHT = 800;
 constexpr UINT SWAP_CHAIN_BUFFER_COUNT = 2;
 constexpr UINT REFRESH_RATE = 60;
-constexpr float CLEAR_COLOR[4] = { 0.11f, 0.11f, 0.11f, 1.0f };
 constexpr int HEARTBEAT_FRAMES = 600;
 constexpr INT_PTR SHELL_EXECUTE_SUCCESS_MIN = 32; // ShellExecute returns > 32 on success
 constexpr const wchar_t* WINDOW_CLASS_NAME = L"SurumeWnd";
@@ -46,6 +46,10 @@ constexpr float UI_FONT_SIZE = 16.0f; // also used for the monospace diff font
 constexpr const wchar_t* UI_FONT_FILE = L"segoeui.ttf";
 constexpr const wchar_t* MONO_FONT_FILE = L"consola.ttf";
 constexpr const wchar_t* CJK_FONT_FILE = L"msyh.ttc"; // merged into both for CJK glyphs
+constexpr const wchar_t* PERSONALIZE_KEY =
+    L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
+constexpr const wchar_t* APPS_USE_LIGHT_THEME_VALUE = L"AppsUseLightTheme";
+constexpr const wchar_t* THEME_CHANGE_SETTING = L"ImmersiveColorSet"; // WM_SETTINGCHANGE lparam
 
 struct Window
 {
@@ -64,6 +68,9 @@ struct Window
     int pending_height = 0;
     float dpi_scale = 1.0f;
     float pending_dpi_scale = 0.0f; // non-zero when the window moved to a monitor with another DPI
+    ThemeMode theme_mode = ThemeMode::SYSTEM;
+    bool is_dark_mode = false;
+    bool has_pending_theme_change = false; // the setting or Windows' app mode may have changed
 };
 
 // Single window; window_proc needs to reach it
@@ -139,6 +146,14 @@ static LRESULT WINAPI window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
             if ((wparam & 0xfff0) == SC_KEYMENU)
             {
                 return 0;
+            }
+            break;
+
+        case WM_SETTINGCHANGE:
+            // Sent for many settings; this one covers switching Windows between light and dark
+            if (lparam != 0 && wcscmp((const wchar_t*)lparam, THEME_CHANGE_SETTING) == 0)
+            {
+                main_window.has_pending_theme_change = true;
             }
             break;
 
@@ -276,14 +291,54 @@ static void load_fonts()
     add_font(MONO_FONT_FILE);
 }
 
-// Reset the style and scale every size and the fonts for the given DPI scale.
-static void apply_dpi_scale(float scale)
+// Windows' "Choose your app mode" setting. Light when it can't be read, as Windows defaults.
+static bool is_system_dark_mode()
+{
+    DWORD uses_light_theme = 1;
+    DWORD size = sizeof(uses_light_theme);
+    LSTATUS status = RegGetValueW(HKEY_CURRENT_USER, PERSONALIZE_KEY, APPS_USE_LIGHT_THEME_VALUE,
+        RRF_RT_REG_DWORD, nullptr, &uses_light_theme, &size);
+    return status == ERROR_SUCCESS && uses_light_theme == 0;
+}
+
+static bool resolve_dark_mode(ThemeMode mode)
+{
+    switch (mode)
+    {
+        case ThemeMode::SYSTEM:
+            return is_system_dark_mode();
+        case ThemeMode::LIGHT:
+            return false;
+        case ThemeMode::DARK:
+            return true;
+    }
+    return is_system_dark_mode();
+}
+
+// Reset the style to the window's light or dark mode and scale every size and the fonts
+// for its DPI scale.
+static void apply_style(const Window& window)
 {
     ImGuiStyle style;
-    ImGui::StyleColorsDark(&style);
-    style.ScaleAllSizes(scale);
-    style.FontScaleDpi = scale;
+    if (window.is_dark_mode)
+    {
+        ImGui::StyleColorsDark(&style);
+    }
+    else
+    {
+        ImGui::StyleColorsLight(&style);
+    }
+    style.ScaleAllSizes(window.dpi_scale);
+    style.FontScaleDpi = window.dpi_scale;
     ImGui::GetStyle() = style;
+    gui_set_dark_mode(window.is_dark_mode);
+}
+
+// Ask Windows for a dark title bar in dark mode. Ignored on versions without it.
+static void apply_title_bar_mode(const Window& window)
+{
+    BOOL is_dark = window.is_dark_mode ? TRUE : FALSE;
+    DwmSetWindowAttribute(window.hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &is_dark, sizeof(is_dark));
 }
 
 static bool window_init(Window& window, const wchar_t* title)
@@ -331,6 +386,8 @@ static bool window_init(Window& window, const wchar_t* title)
         return false;
     }
 
+    window.is_dark_mode = resolve_dark_mode(window.theme_mode);
+    apply_title_bar_mode(window); // before showing, so the title bar never flashes light
     ShowWindow(window.hwnd, SW_SHOWDEFAULT);
     UpdateWindow(window.hwnd);
 
@@ -338,7 +395,7 @@ static bool window_init(Window& window, const wchar_t* title)
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr; // layout is app-owned and persisted in settings.toml
-    apply_dpi_scale(window.dpi_scale);
+    apply_style(window);
     load_fonts();
     if (!ImGui_ImplWin32_Init(window.hwnd) ||
         !ImGui_ImplDX11_Init(window.device, window.device_context))
@@ -375,8 +432,28 @@ static void handle_dpi_change(Window& window)
 
     window.dpi_scale = window.pending_dpi_scale;
     window.pending_dpi_scale = 0.0f;
-    apply_dpi_scale(window.dpi_scale);
+    apply_style(window);
     LOG_INFO("DPI scale changed to %.2f", window.dpi_scale);
+}
+
+static void handle_theme_change(Window& window)
+{
+    if (!window.has_pending_theme_change)
+    {
+        return;
+    }
+
+    window.has_pending_theme_change = false;
+    bool is_dark_mode = resolve_dark_mode(window.theme_mode);
+    if (is_dark_mode == window.is_dark_mode)
+    {
+        return;
+    }
+
+    window.is_dark_mode = is_dark_mode;
+    apply_title_bar_mode(window);
+    apply_style(window);
+    LOG_INFO("theme changed to %s", is_dark_mode ? "dark" : "light");
 }
 
 static void handle_resize(Window& window)
@@ -414,7 +491,9 @@ static void present(Window& window)
     ImGui::Render();
 
     window.device_context->OMSetRenderTargets(1, &window.render_target_view, nullptr);
-    window.device_context->ClearRenderTargetView(window.render_target_view, CLEAR_COLOR);
+    const ImVec4& clear = ImGui::GetStyle().Colors[ImGuiCol_WindowBg];
+    const float clear_color[4] = { clear.x, clear.y, clear.z, 1.0f };
+    window.device_context->ClearRenderTargetView(window.render_target_view, clear_color);
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 
     HRESULT hr = window.swap_chain->Present(1, 0);
@@ -608,9 +687,9 @@ static void push_request(AppState& state, RequestKind kind)
     state.requests.push_back(request);
 }
 
-static void app_init(AppState& state, const std::string& app_data_dir)
+// Settings are already loaded: the window needed the theme before it opened.
+static void app_init(AppState& state)
 {
-    persistence_load(state, app_data_dir);
     jobs_push(make_job(state, JobKind::FIND_GIT));
 
     // Restore the last active repository once the worker has checked for Git
@@ -1128,6 +1207,8 @@ static void handle_request(AppState& state, const Request& request, Window& wind
             break;
 
         case RequestKind::SAVE_SETTINGS:
+            window.theme_mode = state.settings.theme_mode;
+            window.has_pending_theme_change = true;
             if (!persistence_save(state, app_data_dir))
             {
                 state.status_message = "Could not save settings to " + app_data_dir;
@@ -1185,6 +1266,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     log_init(app_data_dir);
     LOG_INFO("=== Surume starting === app data '%s'", app_data_dir.c_str());
 
+    AppState state;
+    persistence_load(state, app_data_dir);
+    main_window.theme_mode = state.settings.theme_mode;
     if (!window_init(main_window, L"Surume"))
     {
         LOG_ERROR("window_init failed, aborting");
@@ -1199,8 +1283,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         return 1;
     }
 
-    AppState state;
-    app_init(state, app_data_dir);
+    app_init(state);
 
     int frame_count = 0;
     int active_frames = ACTIVE_FRAMES;
@@ -1225,6 +1308,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         }
         apply_results(state);
         handle_dpi_change(main_window);
+        handle_theme_change(main_window);
         handle_resize(main_window);
         begin_frame();
         gui_render(state);

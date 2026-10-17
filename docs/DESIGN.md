@@ -194,6 +194,7 @@ With no repository open, the right pane shows one primary action, `Open reposito
 - Git executable path (empty means use `PATH`).
 - Default folder for the open dialog.
 - Auto-fetch enabled and interval.
+- Theme: System (follows the Windows app mode), Light or Dark.
 - External editor path.
 - Confirmation preferences for destructive actions.
 

@@ -55,3 +55,4 @@ build.bat     build script
 - [DESIGN.md](docs/DESIGN.md): product spec and current status
 - [ARCHITECTURE.md](docs/ARCHITECTURE.md): technical design
 - [TASKS.md](docs/TASKS.md): task list
+- [UI_IDEAS.md](docs/UI_IDEAS.md): undecided ideas for making the UI easier to look at

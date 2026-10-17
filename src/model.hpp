@@ -14,6 +14,13 @@ enum class NavMode
     HISTORY,
 };
 
+enum class ThemeMode
+{
+    SYSTEM, // follow Windows' app mode
+    LIGHT,
+    DARK,
+};
+
 enum class BranchLocation
 {
     LOCAL,
@@ -97,6 +104,7 @@ struct AppSettings
     std::string default_open_directory;
     bool is_auto_fetch_enabled = false;
     int auto_fetch_interval_minutes = 15;
+    ThemeMode theme_mode = ThemeMode::SYSTEM;
 };
 
 // A loaded diff, split into lines for drawing.

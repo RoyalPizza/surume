@@ -8,6 +8,7 @@
 #include <windows.h>
 
 #include <cstdio>
+#include <cstring>
 #include <string>
 
 constexpr int WIDE_PATH_SIZE = MAX_PATH * 2;
@@ -158,6 +159,20 @@ static void load_settings(AppState& state, const std::string& path)
         state.settings.auto_fetch_interval_minutes = (int)interval.u.int64;
     }
 
+    // Anything else, including a missing value, keeps following Windows
+    toml_datum_t theme = toml_get(toml.toptab, "theme");
+    if (theme.type == TOML_STRING)
+    {
+        if (strcmp(theme.u.s, "light") == 0)
+        {
+            state.settings.theme_mode = ThemeMode::LIGHT;
+        }
+        else if (strcmp(theme.u.s, "dark") == 0)
+        {
+            state.settings.theme_mode = ThemeMode::DARK;
+        }
+    }
+
     LOG_INFO("persistence: settings loaded");
     toml_free(toml);
 }
@@ -184,6 +199,20 @@ static bool save_repositories(const AppState& state, const std::string& path)
     return true;
 }
 
+static const char* theme_name(ThemeMode mode)
+{
+    switch (mode)
+    {
+        case ThemeMode::SYSTEM:
+            return "system";
+        case ThemeMode::LIGHT:
+            return "light";
+        case ThemeMode::DARK:
+            return "dark";
+    }
+    return "system";
+}
+
 static bool save_settings(const AppState& state, const std::string& path)
 {
     FILE* file = open_file(path, L"w");
@@ -201,6 +230,7 @@ static bool save_settings(const AppState& state, const std::string& path)
     fprintf(file, "auto_fetch_enabled      = %s\n",
         settings.is_auto_fetch_enabled ? "true" : "false");
     fprintf(file, "auto_fetch_interval_min = %d\n", settings.auto_fetch_interval_minutes);
+    fprintf(file, "theme                   = \"%s\"\n", theme_name(settings.theme_mode));
     fclose(file);
     return true;
 }

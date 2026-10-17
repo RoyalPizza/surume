@@ -559,6 +559,7 @@ static void test_persistence(const std::string& root)
     saved.settings.git_path = "C:\\Program Files\\Git\\bin\\git.exe";
     saved.settings.is_auto_fetch_enabled = true;
     saved.settings.auto_fetch_interval_minutes = 7;
+    saved.settings.theme_mode = ThemeMode::LIGHT;
     check(persistence_save(saved, dir), "settings save to a non-ASCII folder");
 
     AppState loaded;
@@ -583,6 +584,7 @@ static void test_persistence(const std::string& root)
     check_equal(loaded.settings.git_path, saved.settings.git_path, "git path round-trips");
     check(loaded.settings.is_auto_fetch_enabled &&
         loaded.settings.auto_fetch_interval_minutes == 7, "auto-fetch settings round-trip");
+    check(loaded.settings.theme_mode == ThemeMode::LIGHT, "theme round-trips");
 }
 
 int main()

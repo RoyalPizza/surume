@@ -39,6 +39,7 @@ constexpr float ABOUT_BUTTON_WIDTH = 80.0f;
 constexpr float SETTINGS_WIDTH = 480.0f;
 constexpr float SETTINGS_LABEL_WIDTH = 160.0f;
 constexpr float AUTO_FETCH_INPUT_WIDTH = 60.0f;
+constexpr float THEME_COMBO_WIDTH = 120.0f;
 constexpr int AUTO_FETCH_MIN_MINUTES = 1;
 constexpr int AUTO_FETCH_MAX_MINUTES = 120;
 constexpr int AUTO_FETCH_STEP = 1;
@@ -54,19 +55,53 @@ constexpr int COMMIT_LABEL_SIZE = 128;
 constexpr int BRANCH_NAME_SIZE = 128;
 constexpr int SETTINGS_PATH_SIZE = 512;
 
-// Colors: hardcoded only for semantic Git states
-constexpr ImVec4 COLOR_CONFLICTED = ImVec4(1.0f, 0.35f, 0.2f, 1.0f);
-constexpr ImVec4 COLOR_UNTRACKED = ImVec4(0.55f, 0.55f, 0.55f, 1.0f);
-constexpr ImVec4 COLOR_DELETED = ImVec4(0.9f, 0.3f, 0.3f, 1.0f);
-constexpr ImVec4 COLOR_RENAMED = ImVec4(0.4f, 0.7f, 1.0f, 1.0f);
-constexpr ImVec4 COLOR_ADDED = ImVec4(0.3f, 0.85f, 0.3f, 1.0f);
-constexpr ImVec4 COLOR_MODIFIED = ImVec4(0.9f, 0.7f, 0.2f, 1.0f);
-constexpr ImVec4 COLOR_DIFF_ADDED_TEXT = ImVec4(0.4f, 0.9f, 0.4f, 1.0f);
-constexpr ImVec4 COLOR_DIFF_REMOVED_TEXT = ImVec4(0.95f, 0.4f, 0.4f, 1.0f);
-constexpr ImVec4 COLOR_DIFF_HUNK_TEXT = ImVec4(0.5f, 0.8f, 1.0f, 1.0f);
-constexpr ImVec4 COLOR_ERROR_TEXT = ImVec4(1.0f, 0.4f, 0.4f, 1.0f);
-constexpr ImU32 COLOR_DIFF_ADDED_BACKGROUND = IM_COL32(30, 70, 30, 255);
-constexpr ImU32 COLOR_DIFF_REMOVED_BACKGROUND = IM_COL32(70, 25, 25, 255);
+// Colors: hardcoded only for semantic Git states, one set per Windows app mode
+struct Palette
+{
+    ImVec4 conflicted;
+    ImVec4 deleted;
+    ImVec4 renamed;
+    ImVec4 added;
+    ImVec4 modified;
+    ImVec4 diff_added_text;
+    ImVec4 diff_removed_text;
+    ImVec4 diff_hunk_text;
+    ImVec4 error_text;
+    ImU32 diff_added_background;
+    ImU32 diff_removed_background;
+};
+
+constexpr Palette DARK_PALETTE = {
+    .conflicted = ImVec4(1.0f, 0.35f, 0.2f, 1.0f),
+    .deleted = ImVec4(0.9f, 0.3f, 0.3f, 1.0f),
+    .renamed = ImVec4(0.4f, 0.7f, 1.0f, 1.0f),
+    .added = ImVec4(0.3f, 0.85f, 0.3f, 1.0f),
+    .modified = ImVec4(0.9f, 0.7f, 0.2f, 1.0f),
+    .diff_added_text = ImVec4(0.4f, 0.9f, 0.4f, 1.0f),
+    .diff_removed_text = ImVec4(0.95f, 0.4f, 0.4f, 1.0f),
+    .diff_hunk_text = ImVec4(0.5f, 0.8f, 1.0f, 1.0f),
+    .error_text = ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+    .diff_added_background = IM_COL32(30, 70, 30, 255),
+    .diff_removed_background = IM_COL32(70, 25, 25, 255),
+};
+
+// Darker text and pale backgrounds, so the same states read on a white background
+constexpr Palette LIGHT_PALETTE = {
+    .conflicted = ImVec4(0.85f, 0.25f, 0.0f, 1.0f),
+    .deleted = ImVec4(0.75f, 0.1f, 0.1f, 1.0f),
+    .renamed = ImVec4(0.1f, 0.4f, 0.8f, 1.0f),
+    .added = ImVec4(0.1f, 0.55f, 0.1f, 1.0f),
+    .modified = ImVec4(0.7f, 0.45f, 0.0f, 1.0f),
+    .diff_added_text = ImVec4(0.05f, 0.4f, 0.05f, 1.0f),
+    .diff_removed_text = ImVec4(0.6f, 0.05f, 0.05f, 1.0f),
+    .diff_hunk_text = ImVec4(0.1f, 0.35f, 0.7f, 1.0f),
+    .error_text = ImVec4(0.8f, 0.1f, 0.1f, 1.0f),
+    .diff_added_background = IM_COL32(220, 245, 220, 255),
+    .diff_removed_background = IM_COL32(250, 222, 222, 255),
+};
+
+// Settings theme choices, in ThemeMode order
+constexpr const char* THEME_NAMES[] = { "System", "Light", "Dark" };
 
 // UTF-8 arrows (Segoe UI has them)
 constexpr const char* ARROW_UP = "\xE2\x86\x91";
@@ -78,14 +113,8 @@ constexpr ImGuiWindowFlags MAIN_WINDOW_FLAGS =
     ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoSavedSettings |
     ImGuiWindowFlags_NoBringToFrontOnFocus;
 
-struct FileBadge
-{
-    char letter = 'M';
-    ImVec4 color = COLOR_MODIFIED;
-    const char* tooltip = "Modified";
-};
-
 // Single GUI instance: widget text and selections that live across frames
+static const Palette* palette = &DARK_PALETTE; // set by gui_set_dark_mode
 static float ui_scale = 1.0f; // DPI scale for this frame, from the style
 static char new_branch_name[BRANCH_NAME_SIZE] = {};
 static int delete_branch_selection = -1;
@@ -93,6 +122,7 @@ static char settings_git_path[SETTINGS_PATH_SIZE] = {};
 static char settings_open_directory[SETTINGS_PATH_SIZE] = {};
 static bool settings_is_auto_fetch_enabled = false;
 static int settings_auto_fetch_minutes = 15;
+static int settings_theme = 0; // index into THEME_NAMES
 static bool is_settings_loaded = false;
 static std::string pending_discard_path; // empty means every change
 static bool is_discard_modal_requested = false;
@@ -174,6 +204,7 @@ static void load_settings_fields(const AppSettings& settings)
         sizeof(settings_open_directory) - 1);
     settings_is_auto_fetch_enabled = settings.is_auto_fetch_enabled;
     settings_auto_fetch_minutes = settings.auto_fetch_interval_minutes;
+    settings_theme = (int)settings.theme_mode;
     is_settings_loaded = true;
 }
 
@@ -205,6 +236,11 @@ static void render_settings_modal(AppState& state)
     ImGui::InputTextWithHint("##opendir", "Leave empty for last used",
         settings_open_directory, sizeof(settings_open_directory));
 
+    ImGui::Text("Theme");
+    ImGui::SameLine(scaled(SETTINGS_LABEL_WIDTH));
+    ImGui::SetNextItemWidth(scaled(THEME_COMBO_WIDTH));
+    ImGui::Combo("##theme", &settings_theme, THEME_NAMES, IM_ARRAYSIZE(THEME_NAMES));
+
     ImGui::Separator();
     ImGui::Text("Auto-fetch");
     ImGui::SameLine(scaled(SETTINGS_LABEL_WIDTH));
@@ -234,6 +270,7 @@ static void render_settings_modal(AppState& state)
         state.settings.default_open_directory = settings_open_directory;
         state.settings.is_auto_fetch_enabled = settings_is_auto_fetch_enabled;
         state.settings.auto_fetch_interval_minutes = settings_auto_fetch_minutes;
+        state.settings.theme_mode = (ThemeMode)settings_theme;
         request(state, RequestKind::SAVE_SETTINGS);
         is_settings_loaded = false;
         ImGui::CloseCurrentPopup();
@@ -524,6 +561,11 @@ static void render_file_menu(AppState& state)
         request(state, RequestKind::OPEN_REPO_DIALOG);
     }
     ImGui::Separator();
+    if (ImGui::MenuItem("Settings..."))
+    {
+        state.is_settings_modal_requested = true;
+    }
+    ImGui::Separator();
     if (ImGui::MenuItem("Exit", "Alt+F4"))
     {
         request(state, RequestKind::EXIT);
@@ -591,11 +633,6 @@ static void render_repository_menu(AppState& state)
     if (ImGui::MenuItem("Discard all changes...", nullptr, false, can_discard))
     {
         request_discard("");
-    }
-    ImGui::Separator();
-    if (ImGui::MenuItem("Settings..."))
-    {
-        state.is_settings_modal_requested = true;
     }
     ImGui::EndMenu();
 }
@@ -885,29 +922,37 @@ static void render_header_bar(AppState& state)
 // Changes tab
 // -------------------------------------------------------------------------
 
+struct FileBadge
+{
+    char letter = 'M';
+    ImVec4 color = palette->modified;
+    const char* tooltip = "Modified";
+};
+
 static FileBadge file_badge(const FileStatus& file)
 {
     FileBadge badge;
     if (file.is_conflicted)
     {
-        badge = { '!', COLOR_CONFLICTED, "Conflicted: finish the merge in an editor or terminal" };
+        badge = { '!', palette->conflicted, "Conflicted: finish the merge in an editor or terminal" };
     }
     else if (file.index_status == '?' && file.worktree_status == '?')
     {
-        badge = { '?', COLOR_UNTRACKED, "Untracked" };
+        // untracked files show as new, like GitHub Desktop
+        badge = { 'A', palette->added, "New file" };
     }
     else if (file.index_status == 'D' || file.worktree_status == 'D')
     {
-        badge = { 'D', COLOR_DELETED, "Deleted" };
+        badge = { 'D', palette->deleted, "Deleted" };
     }
     else if (file.index_status == 'R')
     {
-        badge = { 'R', COLOR_RENAMED, "Renamed" };
+        badge = { 'R', palette->renamed, "Renamed" };
     }
     else if (file.index_status == 'A')
     {
         const char* tooltip = file.worktree_status == 'M' ? "New file (modified)" : "New file";
-        badge = { 'A', COLOR_ADDED, tooltip };
+        badge = { 'A', palette->added, tooltip };
     }
     return badge;
 }
@@ -1144,7 +1189,7 @@ static void render_conflict_banner(const AppState& state)
     {
         if (file.is_conflicted)
         {
-            ImGui::PushStyleColor(ImGuiCol_Text, COLOR_CONFLICTED);
+            ImGui::PushStyleColor(ImGuiCol_Text, palette->conflicted);
             ImGui::TextWrapped("This repository has merge conflicts. Resolve them in an editor "
                 "or terminal, then commit.");
             ImGui::PopStyleColor();
@@ -1263,7 +1308,7 @@ static void render_amend_checkbox(AppState& state)
     if (state.is_amend && state.is_last_commit_pushed)
     {
         ImGui::SameLine();
-        ImGui::TextColored(COLOR_CONFLICTED, "already pushed");
+        ImGui::TextColored(palette->conflicted, "already pushed");
         if (ImGui::IsItemHovered())
         {
             ImGui::SetTooltip("This commit is on a remote branch. Amending rewrites published "
@@ -1513,15 +1558,15 @@ static void render_diff_line(const char* start, const char* end, DiffLineKind ki
     switch (kind)
     {
         case DiffLineKind::ADDED:
-            text_color = COLOR_DIFF_ADDED_TEXT;
-            background = COLOR_DIFF_ADDED_BACKGROUND;
+            text_color = palette->diff_added_text;
+            background = palette->diff_added_background;
             break;
         case DiffLineKind::REMOVED:
-            text_color = COLOR_DIFF_REMOVED_TEXT;
-            background = COLOR_DIFF_REMOVED_BACKGROUND;
+            text_color = palette->diff_removed_text;
+            background = palette->diff_removed_background;
             break;
         case DiffLineKind::HUNK:
-            text_color = COLOR_DIFF_HUNK_TEXT;
+            text_color = palette->diff_hunk_text;
             break;
         case DiffLineKind::HEADER:
             text_color = ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
@@ -1783,7 +1828,7 @@ static void render_right_content(AppState& state)
         float line_height = ImGui::GetTextLineHeightWithSpacing();
         ImGui::SetCursorPos(ImVec2(scaled(STATUS_MESSAGE_MARGIN_X),
             available.y - line_height - scaled(STATUS_MESSAGE_MARGIN_BOTTOM)));
-        ImGui::TextColored(COLOR_ERROR_TEXT, "%s", state.status_message.c_str());
+        ImGui::TextColored(palette->error_text, "%s", state.status_message.c_str());
     }
 }
 
@@ -1845,6 +1890,11 @@ static void handle_shortcuts(AppState& state)
     {
         state.nav_mode = NavMode::HISTORY;
     }
+}
+
+void gui_set_dark_mode(bool is_dark_mode)
+{
+    palette = is_dark_mode ? &DARK_PALETTE : &LIGHT_PALETTE;
 }
 
 void gui_render(AppState& state)

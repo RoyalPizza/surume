@@ -58,7 +58,8 @@ if errorlevel 1 exit /b 1
 
 link /nologo %LINKCFG% /SUBSYSTEM:WINDOWS /OUT:%BIN%\surume.exe ^
     /PDB:%OBJ%\surume.pdb /ILK:%OBJ%\surume.ilk %OBJ%\*.obj %OBJ%\surume.res ^
-    user32.lib shell32.lib ole32.lib uuid.lib d3d11.lib dxgi.lib d3dcompiler.lib
+    user32.lib shell32.lib ole32.lib uuid.lib advapi32.lib dwmapi.lib ^
+    d3d11.lib dxgi.lib d3dcompiler.lib
 if errorlevel 1 exit /b 1
 
 echo Built %BIN%\surume.exe
