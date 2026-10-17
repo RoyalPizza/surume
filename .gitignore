@@ -1,0 +1,38 @@
+# Build output
+build/
+build2/
+bin/
+obj/
+
+# CMake generated
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+*.cmake
+!CMakeLists.txt
+
+# MSVC / Visual Studio
+.vs/
+*.user
+*.suo
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+
+# Compiler output
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.obj
+
+# ImGui saved layout
+imgui.ini
+
+# Logs
+*.log
+
+# OS
+Thumbs.db
+.DS_Store
