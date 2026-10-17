@@ -109,10 +109,15 @@ static void load_settings(AppState& state, const std::string& path)
         return;
     }
 
+    // Accept integers too: a hand-edited "280" is a TOML integer, not a float
     toml_datum_t width = toml_get(toml.toptab, "left_column_width");
     if (width.type == TOML_FP64)
     {
         state.left_column_width = (float)width.u.fp64;
+    }
+    else if (width.type == TOML_INT64)
+    {
+        state.left_column_width = (float)width.u.int64;
     }
 
     toml_datum_t git_path = toml_get(toml.toptab, "git_path");
@@ -173,7 +178,7 @@ static bool save_settings(const AppState& state, const std::string& path)
     }
 
     const AppSettings& settings = state.settings;
-    fprintf(file, "left_column_width       = %g\n", state.left_column_width);
+    fprintf(file, "left_column_width       = %.1f\n", state.left_column_width);
     fprintf(file, "git_path                = \"%s\"\n", escape_toml(settings.git_path).c_str());
     fprintf(file, "default_open_dir        = \"%s\"\n",
         escape_toml(settings.default_open_directory).c_str());

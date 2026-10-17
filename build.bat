@@ -1,7 +1,7 @@
 @echo off
 setlocal
 
-rem Usage: build.bat [release]   (debug by default)
+rem Usage: build.bat [release|test]   (debug by default; test builds and runs the tests)
 
 rem Find MSVC via vswhere unless cl is already on PATH (e.g. a Developer Command Prompt)
 where cl >nul 2>nul
@@ -37,6 +37,7 @@ if "%1"=="release" (
 )
 
 set COMMON=/nologo /c /MP /EHsc /utf-8 %CFG% %DEFINES% %INCLUDES% /Fo:%OBJ%\ /Fd:%OBJ%\
+if "%1"=="test" goto :test
 
 rem Third-party code: no warnings, we don't own it
 cl %COMMON% /std:c++20 /W0 ^
@@ -62,3 +63,19 @@ if errorlevel 1 exit /b 1
 
 echo Built %BIN%\surume.exe
 endlocal
+exit /b 0
+
+rem Tests: the non-GUI modules plus src\tests, run against throwaway repositories
+:test
+cl %COMMON% /W0 /D_CRT_SECURE_NO_WARNINGS %TOML%\tomlc17.c
+if errorlevel 1 exit /b 1
+
+cl %COMMON% /std:c++20 /W4 /WX src\git.cpp src\log.cpp src\persistence.cpp src\tests\*.cpp
+if errorlevel 1 exit /b 1
+
+link /nologo /DEBUG /SUBSYSTEM:CONSOLE /OUT:%BIN%\surume_tests.exe ^
+    /PDB:%OBJ%\surume_tests.pdb /ILK:%OBJ%\surume_tests.ilk %OBJ%\*.obj shell32.lib
+if errorlevel 1 exit /b 1
+
+%BIN%\surume_tests.exe
+exit /b %errorlevel%

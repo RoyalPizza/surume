@@ -153,7 +153,9 @@ Planned: write with wide-character file APIs so non-ASCII user folders work, and
 
 ## Testing
 
-No tests exist yet. The plan:
+`build.bat test` builds `bin\surume_tests.exe` from `src\tests\` plus the non-GUI modules (`git`, `persistence`, `log`) and runs it. It returns non-zero if any check fails.
 
-- A test executable built by `build.bat` that links `git.cpp` and runs against throwaway repositories in a temp folder: status parsing (renames, non-ASCII and quoted names), branch and log parsing, command-line quoting, commit selection, partial-commit patches, stash.
+- The tests create throwaway repositories under `%TEMP%\surume tests ë日\` (non-ASCII and spaces on purpose) and delete the folder afterwards.
+- Covered: repository root validation, command-line quoting and UTF-8 round trips through commit messages, status parsing (renames, non-ASCII and quoted names), diffs of untracked files, branch and log parsing, branch create/checkout/delete, and settings persistence in a non-ASCII folder.
+- Add a test with every Git feature: commit selection, partial-commit patches, discard, stash, amend.
 - Manual QA against repositories with: a clean tree, untracked files, deleted and renamed files, merge conflicts, detached `HEAD`, no remote, ahead/behind state, and a very large change set.
