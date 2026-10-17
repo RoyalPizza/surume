@@ -60,6 +60,16 @@ bool git_commit_paths(const std::string& repo_path, const std::vector<std::strin
 // (including a repository with no commits yet).
 bool git_get_log(const std::string& repo_path, std::vector<CommitInfo>& commits);
 
+// Read a commit's metadata, full message and changed files (merges compare with their first
+// parent). Returns false if the commit can't be read.
+bool git_get_commit_details(const std::string& repo_path, const std::string& hash,
+    CommitDetails& details);
+
+// Build the diff of one file in a commit (both paths for a rename). Returns false if git
+// produced none.
+bool git_get_commit_file_diff(const std::string& repo_path, const std::string& hash,
+    const FileStatus& file, std::string& diff);
+
 // Read the current branch, its upstream and ahead/behind counts, and the index and working
 // tree status of every changed file, in one git call. Returns false on error.
 bool git_get_status(const std::string& repo_path, BranchStatus& branch,

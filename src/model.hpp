@@ -66,10 +66,22 @@ struct DiffLine
 
 struct CommitInfo
 {
-    std::string hash;    // short hash
+    std::string hash;      // short hash
+    std::string full_hash;
     std::string author;
-    std::string date;    // relative, e.g. "3 hours ago"
-    std::string subject; // first line of the message
+    std::string date;      // relative, e.g. "3 hours ago"
+    std::string subject;   // first line of the message
+};
+
+// Everything shown for one commit in History. files use index_status for the change letter.
+struct CommitDetails
+{
+    std::string full_hash;
+    std::string author;
+    std::string email;
+    std::string date;    // absolute, "2026-10-17 14:30"
+    std::string message; // full message
+    std::vector<FileStatus> files;
 };
 
 struct AppSettings
@@ -78,6 +90,15 @@ struct AppSettings
     std::string default_open_directory;
     bool is_auto_fetch_enabled = false;
     int auto_fetch_interval_minutes = 15;
+};
+
+// A loaded diff, split into lines for drawing.
+struct DiffView
+{
+    std::string text;
+    std::vector<DiffLine> lines;
+    int max_columns = 0;             // widest line, for the horizontal scroll range
+    bool is_large_confirmed = false; // user chose to show a diff over the size limit
 };
 
 // Everything Git reported for the active repository on the last refresh. Only applying a
@@ -100,6 +121,8 @@ enum class RequestKind
     OPEN_IN_TERMINAL,
     REFRESH,
     LOAD_DIFF,        // text: file path
+    LOAD_COMMIT,      // uses selected_commit_hash
+    LOAD_COMMIT_DIFF, // uses selected_commit_hash and selected_commit_file
     COMMIT,           // uses the ticked files and commit text in AppState
     CHECKOUT_BRANCH,  // text: branch name, flag: is a remote branch
     CREATE_BRANCH,    // text: branch name
@@ -135,10 +158,13 @@ struct AppState
     NavMode nav_mode = NavMode::CHANGES;
     char file_filter[FILE_FILTER_SIZE] = {}; // case-insensitive path filter for the file list
     std::string selected_file_path; // empty when no file is selected
-    std::string current_diff;       // diff of selected_file_path, once loaded
-    std::vector<DiffLine> diff_lines; // current_diff split and classified
-    int diff_max_columns = 0;         // widest line, for the horizontal scroll range
-    bool is_large_diff_confirmed = false; // user chose to show a diff over the size limit
+    DiffView diff;                  // diff of selected_file_path, once loaded
+
+    // History view
+    std::string selected_commit_hash; // full hash; empty when no commit is selected
+    CommitDetails commit_details;     // of selected_commit_hash, once loaded
+    std::string selected_commit_file; // path of the file shown from the commit
+    DiffView commit_diff;             // that file's diff in the commit
     float left_column_width = 280.0f; // unscaled; persisted
 
     // Background work (refreshed from the jobs module every frame)

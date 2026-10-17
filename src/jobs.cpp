@@ -34,6 +34,8 @@ static bool is_mutation(JobKind kind)
         case JobKind::OPEN_REPO:
         case JobKind::REFRESH:
         case JobKind::LOAD_DIFF:
+        case JobKind::LOAD_COMMIT:
+        case JobKind::LOAD_COMMIT_DIFF:
             return false;
     }
     return false;
@@ -50,7 +52,10 @@ static const char* job_label(JobKind kind)
         case JobKind::REFRESH:
             return "Refreshing";
         case JobKind::LOAD_DIFF:
+        case JobKind::LOAD_COMMIT_DIFF:
             return "Loading diff";
+        case JobKind::LOAD_COMMIT:
+            return "Loading commit";
         case JobKind::COMMIT:
             return "Committing";
         case JobKind::CHECKOUT_BRANCH:
@@ -126,6 +131,19 @@ static void run_job(const Job& job, JobResult& result)
         case JobKind::LOAD_DIFF:
             result.diff_path = job.file.path;
             result.is_success = git_get_diff(job.repo_path, job.file, result.diff);
+            break;
+
+        case JobKind::LOAD_COMMIT:
+            result.commit_hash = job.text;
+            result.is_success = git_get_commit_details(job.repo_path, job.text,
+                result.commit_details);
+            break;
+
+        case JobKind::LOAD_COMMIT_DIFF:
+            result.commit_hash = job.text;
+            result.diff_path = job.file.path;
+            result.is_success = git_get_commit_file_diff(job.repo_path, job.text, job.file,
+                result.diff);
             break;
 
         case JobKind::COMMIT:

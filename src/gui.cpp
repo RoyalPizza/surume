@@ -27,6 +27,7 @@ constexpr float EMPTY_STATE_BUTTON_WIDTH = 200.0f;
 constexpr float EMPTY_HINT_Y_FRACTION = 0.45f;
 constexpr float STATUS_MESSAGE_MARGIN_X = 8.0f;
 constexpr float STATUS_MESSAGE_MARGIN_BOTTOM = 4.0f;
+constexpr float COMMIT_INFO_FRACTION = 0.35f; // share of the History pane for commit info
 constexpr size_t LARGE_DIFF_BYTES = 4 * 1024 * 1024; // placeholder above this
 constexpr float BYTES_PER_MEGABYTE = 1024.0f * 1024.0f;
 constexpr float DIFF_BACKGROUND_OVERSCAN = 8000.0f; // reaches past horizontal scroll
@@ -427,11 +428,11 @@ static void render_view_menu(AppState& state)
         return;
     }
 
-    if (ImGui::MenuItem("Changes", nullptr, state.nav_mode == NavMode::CHANGES))
+    if (ImGui::MenuItem("Changes", "Ctrl+1", state.nav_mode == NavMode::CHANGES))
     {
         state.nav_mode = NavMode::CHANGES;
     }
-    if (ImGui::MenuItem("History", nullptr, state.nav_mode == NavMode::HISTORY))
+    if (ImGui::MenuItem("History", "Ctrl+2", state.nav_mode == NavMode::HISTORY))
     {
         state.nav_mode = NavMode::HISTORY;
     }
@@ -825,9 +826,7 @@ static void filtered_files(const AppState& state, std::vector<int>& indices)
 static void select_file(AppState& state, const FileStatus& file)
 {
     state.selected_file_path = file.path;
-    state.current_diff.clear();
-    state.diff_lines.clear();
-    state.is_large_diff_confirmed = false;
+    state.diff = {};
     request(state, RequestKind::LOAD_DIFF);
 }
 
@@ -1100,15 +1099,80 @@ static void render_changes_tab(AppState& state)
 
 // Two fixed-height lines: the subject, then hash, author and date. Nothing is right-aligned,
 // so long relative dates ("2 years, 3 months ago") can't overlap other text.
-static void render_commit_row(const CommitInfo& commit)
+static void select_commit(AppState& state, const CommitInfo& commit)
 {
+    state.selected_commit_hash = commit.full_hash;
+    state.commit_details = {};
+    state.selected_commit_file.clear();
+    state.commit_diff = {};
+    request(state, RequestKind::LOAD_COMMIT);
+}
+
+// Two fixed-height lines: the subject, then hash, author and date. Nothing is right-aligned,
+// so long relative dates ("2 years, 3 months ago") can't overlap other text.
+static void render_commit_row(AppState& state, const CommitInfo& commit)
+{
+    bool is_selected = commit.full_hash == state.selected_commit_hash;
+    ImVec2 row_start = ImGui::GetCursorPos();
+    float row_height = ImGui::GetTextLineHeightWithSpacing() * 2;
+    if (ImGui::Selectable("##commit", is_selected, ImGuiSelectableFlags_AllowOverlap,
+        ImVec2(0, row_height)) && !is_selected)
+    {
+        select_commit(state, commit);
+    }
+    if (is_selected && should_scroll_to_selection)
+    {
+        ImGui::SetScrollHereY();
+        should_scroll_to_selection = false;
+    }
+
+    ImGui::SetCursorPos(row_start);
     ImGui::TextUnformatted(commit.subject.c_str());
     ImGui::TextDisabled("%s  %s, %s", commit.hash.c_str(), commit.author.c_str(),
         commit.date.c_str());
     ImGui::Separator();
 }
 
-static void render_history_tab(const AppState& state)
+// Up/Down move the commit selection when no text field has focus.
+static void handle_history_keys(AppState& state)
+{
+    const std::vector<CommitInfo>& commits = state.repo.commits;
+    if (ImGui::GetIO().WantTextInput || commits.empty())
+    {
+        return;
+    }
+
+    int step = 0;
+    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow))
+    {
+        step = 1;
+    }
+    else if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))
+    {
+        step = -1;
+    }
+    if (step == 0)
+    {
+        return;
+    }
+
+    int current = -1;
+    for (int i = 0; i < (int)commits.size(); ++i)
+    {
+        if (commits[i].full_hash == state.selected_commit_hash)
+        {
+            current = i;
+        }
+    }
+    int next = current < 0 ? 0 : std::clamp(current + step, 0, (int)commits.size() - 1);
+    if (next != current)
+    {
+        select_commit(state, commits[next]);
+        should_scroll_to_selection = true;
+    }
+}
+
+static void render_history_tab(AppState& state)
 {
     ImGui::BeginChild("##historylist", ImGui::GetContentRegionAvail(), false);
 
@@ -1124,14 +1188,22 @@ static void render_history_tab(const AppState& state)
         return;
     }
 
+    handle_history_keys(state);
     ImGuiListClipper clipper;
     clipper.Begin((int)state.repo.commits.size());
+    for (int i = 0; i < (int)state.repo.commits.size() && should_scroll_to_selection; ++i)
+    {
+        if (state.repo.commits[i].full_hash == state.selected_commit_hash)
+        {
+            clipper.IncludeItemByIndex(i);
+        }
+    }
     while (clipper.Step())
     {
         for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i)
         {
             ImGui::PushID(i);
-            render_commit_row(state.repo.commits[i]);
+            render_commit_row(state, state.repo.commits[i]);
             ImGui::PopID();
         }
     }
@@ -1237,15 +1309,17 @@ static ImFont* mono_font()
 
 // Only the visible lines are drawn; the content width comes from the widest line so the
 // horizontal scroll range covers lines that aren't drawn.
-static void render_diff(const AppState& state)
+// Only the visible lines are drawn; the content width comes from the widest line so the
+// horizontal scroll range covers lines that aren't drawn.
+static void render_diff(const DiffView& view, const char* id)
 {
     ImGui::PushFont(mono_font(), 0.0f);
     float char_width = ImGui::CalcTextSize("M").x;
-    ImGui::SetNextWindowContentSize(ImVec2(state.diff_max_columns * char_width, 0.0f));
-    ImGui::BeginChild("##diffview", ImGui::GetContentRegionAvail(), false,
+    ImGui::SetNextWindowContentSize(ImVec2(view.max_columns * char_width, 0.0f));
+    ImGui::BeginChild(id, ImGui::GetContentRegionAvail(), false,
         ImGuiWindowFlags_HorizontalScrollbar);
 
-    if (state.diff_lines.empty())
+    if (view.lines.empty())
     {
         ImGui::TextDisabled("(no diff output)");
         ImGui::EndChild();
@@ -1256,15 +1330,15 @@ static void render_diff(const AppState& state)
     float line_height = ImGui::GetTextLineHeightWithSpacing();
     float window_x = ImGui::GetWindowPos().x;
     float window_width = ImGui::GetWindowSize().x;
-    const char* text = state.current_diff.c_str();
+    const char* text = view.text.c_str();
 
     ImGuiListClipper clipper;
-    clipper.Begin((int)state.diff_lines.size(), line_height);
+    clipper.Begin((int)view.lines.size(), line_height);
     while (clipper.Step())
     {
         for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i)
         {
-            const DiffLine& line = state.diff_lines[i];
+            const DiffLine& line = view.lines[i];
             const char* start = text + line.start;
             render_diff_line(start, start + line.length, line.kind, line_height, window_x,
                 window_width);
@@ -1330,30 +1404,79 @@ static bool is_binary_diff(const std::string& diff)
 }
 
 // Show the diff, or a placeholder for binary files and diffs over the size limit.
-static void render_diff_or_placeholder(AppState& state, ImVec2 available)
+// Show the diff, or a placeholder for binary files and diffs over the size limit.
+static void render_diff_or_placeholder(DiffView& view, ImVec2 available, const char* id)
 {
-    const std::string& diff = state.current_diff;
     float hint_y = available.y * EMPTY_HINT_Y_FRACTION;
-    if (is_binary_diff(diff))
+    if (is_binary_diff(view.text))
     {
         render_centered_hint("Binary file changed. No text diff to show.", hint_y);
         return;
     }
-    if (diff.size() > LARGE_DIFF_BYTES && !state.is_large_diff_confirmed)
+    if (view.text.size() > LARGE_DIFF_BYTES && !view.is_large_confirmed)
     {
         char message[PICKER_LABEL_SIZE];
         snprintf(message, sizeof(message), "This diff is large (%.1f MB).",
-            diff.size() / BYTES_PER_MEGABYTE);
+            view.text.size() / BYTES_PER_MEGABYTE);
         render_centered_hint(message, hint_y);
         float button_width = scaled(EMPTY_STATE_BUTTON_WIDTH);
         ImGui::SetCursorPosX((available.x - button_width) * 0.5f);
         if (ImGui::Button("Show anyway", ImVec2(button_width, 0)))
         {
-            state.is_large_diff_confirmed = true;
+            view.is_large_confirmed = true;
         }
         return;
     }
-    render_diff(state);
+    render_diff(view, id);
+}
+
+// Commit header, changed files, and the selected file's diff for the History tab.
+static void render_commit_pane(AppState& state, ImVec2 available)
+{
+    const CommitDetails& details = state.commit_details;
+    if (details.full_hash.empty())
+    {
+        render_centered_hint("Loading commit...", available.y * EMPTY_HINT_Y_FRACTION);
+        return;
+    }
+
+    ImGui::BeginChild("##commitinfo", ImVec2(0, available.y * COMMIT_INFO_FRACTION), false);
+    ImGui::TextWrapped("%s", details.message.c_str());
+    ImGui::Spacing();
+    ImGui::TextDisabled("%s <%s>  %s  %s", details.author.c_str(), details.email.c_str(),
+        details.date.c_str(), details.full_hash.c_str());
+    ImGui::Separator();
+    for (int i = 0; i < (int)details.files.size(); ++i)
+    {
+        const FileStatus& file = details.files[i];
+        ImGui::PushID(i);
+        FileBadge badge = file_badge(file);
+        ImGui::TextColored(badge.color, "%c", file.index_status);
+        ImGui::SameLine();
+        bool is_selected = file.path == state.selected_commit_file;
+        if (ImGui::Selectable(file.path.c_str(), is_selected) && !is_selected)
+        {
+            state.selected_commit_file = file.path;
+            state.commit_diff = {};
+            request(state, RequestKind::LOAD_COMMIT_DIFF);
+        }
+        if (!file.old_path.empty() && ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Renamed from: %s", file.old_path.c_str());
+        }
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+    ImGui::Separator();
+
+    ImVec2 diff_area = ImGui::GetContentRegionAvail();
+    if (state.selected_commit_file.empty())
+    {
+        render_centered_hint("Select a file to view its changes",
+            ImGui::GetCursorPosY() + diff_area.y * EMPTY_HINT_Y_FRACTION);
+        return;
+    }
+    render_diff_or_placeholder(state.commit_diff, diff_area, "##commitdiff");
 }
 
 static void render_right_content(AppState& state)
@@ -1364,6 +1487,18 @@ static void render_right_content(AppState& state)
     {
         render_empty_state(state, available);
     }
+    else if (state.nav_mode == NavMode::HISTORY)
+    {
+        if (state.selected_commit_hash.empty())
+        {
+            float hint_y = available.y * EMPTY_HINT_Y_FRACTION;
+            render_centered_hint("Select a commit to view its changes", hint_y);
+        }
+        else
+        {
+            render_commit_pane(state, available);
+        }
+    }
     else if (state.selected_file_path.empty())
     {
         float hint_y = available.y * EMPTY_HINT_Y_FRACTION;
@@ -1371,7 +1506,7 @@ static void render_right_content(AppState& state)
     }
     else
     {
-        render_diff_or_placeholder(state, available);
+        render_diff_or_placeholder(state.diff, available, "##diffview");
     }
 
     if (!state.status_message.empty())
@@ -1426,6 +1561,23 @@ static void render_splitter(AppState& state, float height)
 
 // -------------------------------------------------------------------------
 
+// App-wide keyboard shortcuts.
+static void handle_shortcuts(AppState& state)
+{
+    if (ImGui::IsKeyPressed(ImGuiKey_F5, false) && !state.active_repo.empty())
+    {
+        request(state, RequestKind::REFRESH);
+    }
+    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_1))
+    {
+        state.nav_mode = NavMode::CHANGES;
+    }
+    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_2))
+    {
+        state.nav_mode = NavMode::HISTORY;
+    }
+}
+
 void gui_render(AppState& state)
 {
     ui_scale = ImGui::GetStyle().FontScaleDpi;
@@ -1436,10 +1588,7 @@ void gui_render(AppState& state)
         is_first_frame = false;
     }
 
-    if (ImGui::IsKeyPressed(ImGuiKey_F5, false) && !state.active_repo.empty())
-    {
-        request(state, RequestKind::REFRESH);
-    }
+    handle_shortcuts(state);
 
     open_requested_modals(state);
     render_about_modal();

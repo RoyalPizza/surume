@@ -396,6 +396,41 @@ static void test_diff(const std::string& root)
         "diff line ranges and widest line (tab counts as 4)");
 }
 
+static void test_commit_details(const std::string& root)
+{
+    std::string repo = create_repo(root, "details");
+    write_file(repo + "\\old.txt", "keep\n");
+    run(repo, { "add", "." });
+    run(repo, { "commit", "-q", "-m", "init" });
+
+    run(repo, { "mv", "old.txt", "new.txt" });
+    write_file(repo + "\\added.txt", "hello\n");
+    run(repo, { "add", "." });
+    run(repo, { "commit", "-q", "-m", "Subject line", "-m", "Body line one.\nBody line two." });
+
+    std::vector<CommitInfo> commits;
+    check(git_get_log(repo, commits) && !commits.empty() && commits[0].full_hash.size() == 40,
+        "log includes full hashes");
+
+    CommitDetails details;
+    check(!commits.empty() && git_get_commit_details(repo, commits[0].full_hash, details),
+        "commit details load");
+    check_equal(details.message, "Subject line\n\nBody line one.\nBody line two.",
+        "full message read");
+    check(details.author == "Test" && details.email == "test@example.com" &&
+        details.date.size() == 16, "author, email and absolute date read");
+
+    const FileStatus* renamed = find_file(details.files, "new.txt");
+    const FileStatus* added = find_file(details.files, "added.txt");
+    check(details.files.size() == 2 && renamed != nullptr && renamed->index_status == 'R' &&
+        renamed->old_path == "old.txt" && added != nullptr && added->index_status == 'A',
+        "changed files include the rename and the addition");
+
+    std::string diff;
+    check(added != nullptr && git_get_commit_file_diff(repo, details.full_hash, *added, diff) &&
+        diff.find("+hello") != std::string::npos, "file diff for a commit");
+}
+
 static void test_persistence(const std::string& root)
 {
     std::string dir = root + "\\app data \xC3\xBC\\"; // "ü"
@@ -451,6 +486,7 @@ int main()
     test_conflict(root);
     test_commit_paths(root);
     test_diff(root);
+    test_commit_details(root);
     test_persistence(root);
 
     delete_tree(root);

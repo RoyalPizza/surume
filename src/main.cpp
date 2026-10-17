@@ -622,11 +622,24 @@ static void queue_diff(const AppState& state)
 // diff, since the file may have changed too.
 // Forget unticks for files that are no longer changed, so a file that changes again later
 // starts ticked like any new change.
-static void clear_diff(AppState& state)
+static void clear_diff(DiffView& view)
 {
-    state.current_diff.clear();
-    state.diff_lines.clear();
-    state.diff_max_columns = 0;
+    view = {};
+}
+
+static void set_diff(DiffView& view, const std::string& text)
+{
+    view = {};
+    view.text = text;
+    git_parse_diff_lines(view.text, view.lines, view.max_columns);
+}
+
+static void clear_history_selection(AppState& state)
+{
+    state.selected_commit_hash.clear();
+    state.commit_details = {};
+    state.selected_commit_file.clear();
+    clear_diff(state.commit_diff);
 }
 
 static void prune_unticked(AppState& state)
@@ -666,7 +679,7 @@ static void apply_snapshot(AppState& state, const RepoSnapshot& snapshot)
         }
     }
     state.selected_file_path.clear();
-    clear_diff(state);
+    clear_diff(state.diff);
 }
 
 static void apply_open_repo(AppState& state, const JobResult& result)
@@ -681,10 +694,10 @@ static void apply_open_repo(AppState& state, const JobResult& result)
         state.recent_repos.end());
     state.recent_repos.insert(state.recent_repos.begin(), root);
     state.selected_file_path.clear();
-    clear_diff(state);
+    clear_diff(state.diff);
     state.status_message.clear();
     state.unticked_paths.clear();
-    state.is_large_diff_confirmed = false;
+    clear_history_selection(state);
     clear_commit_text(state);
     state.repo = result.snapshot;
     push_request(state, RequestKind::SAVE_SETTINGS);
@@ -708,6 +721,8 @@ static const char* failure_prefix(JobKind kind)
         case JobKind::OPEN_REPO:
         case JobKind::REFRESH:
         case JobKind::LOAD_DIFF:
+        case JobKind::LOAD_COMMIT:
+        case JobKind::LOAD_COMMIT_DIFF:
             return "";
     }
     return "";
@@ -745,6 +760,8 @@ static void apply_result(AppState& state, const JobResult& result)
 
         case JobKind::REFRESH:
         case JobKind::LOAD_DIFF:
+        case JobKind::LOAD_COMMIT:
+        case JobKind::LOAD_COMMIT_DIFF:
         case JobKind::COMMIT:
         case JobKind::CHECKOUT_BRANCH:
         case JobKind::CREATE_BRANCH:
@@ -762,8 +779,25 @@ static void apply_result(AppState& state, const JobResult& result)
     {
         if (result.diff_path == state.selected_file_path)
         {
-            state.current_diff = result.is_success ? result.diff : "";
-            git_parse_diff_lines(state.current_diff, state.diff_lines, state.diff_max_columns);
+            set_diff(state.diff, result.is_success ? result.diff : "");
+        }
+        return;
+    }
+
+    if (result.kind == JobKind::LOAD_COMMIT)
+    {
+        if (result.commit_hash == state.selected_commit_hash)
+        {
+            state.commit_details = result.is_success ? result.commit_details : CommitDetails{};
+        }
+        return;
+    }
+    if (result.kind == JobKind::LOAD_COMMIT_DIFF)
+    {
+        if (result.commit_hash == state.selected_commit_hash &&
+            result.diff_path == state.selected_commit_file)
+        {
+            set_diff(state.commit_diff, result.is_success ? result.diff : "");
         }
         return;
     }
@@ -818,6 +852,32 @@ static void queue_repo_job(const AppState& state, const Request& request, JobKin
     job.text2 = request.text2;
     job.flag = request.flag;
     jobs_push(job);
+}
+
+static void queue_commit_details(const AppState& state)
+{
+    if (state.active_repo.empty() || state.selected_commit_hash.empty())
+    {
+        return;
+    }
+    Job job = make_job(state, JobKind::LOAD_COMMIT);
+    job.text = state.selected_commit_hash;
+    jobs_push(job);
+}
+
+static void queue_commit_diff(const AppState& state)
+{
+    for (const FileStatus& file : state.commit_details.files)
+    {
+        if (file.path == state.selected_commit_file)
+        {
+            Job job = make_job(state, JobKind::LOAD_COMMIT_DIFF);
+            job.text = state.selected_commit_hash;
+            job.file = file;
+            jobs_push(job);
+            return;
+        }
+    }
 }
 
 // Commit the ticked files: both sides of a rename, so the old path's removal is included.
@@ -880,6 +940,14 @@ static void handle_request(AppState& state, const Request& request, Window& wind
 
         case RequestKind::LOAD_DIFF:
             queue_diff(state);
+            break;
+
+        case RequestKind::LOAD_COMMIT:
+            queue_commit_details(state);
+            break;
+
+        case RequestKind::LOAD_COMMIT_DIFF:
+            queue_commit_diff(state);
             break;
 
         case RequestKind::COMMIT:

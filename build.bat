@@ -48,8 +48,8 @@ if errorlevel 1 exit /b 1
 cl %COMMON% /W0 /D_CRT_SECURE_NO_WARNINGS %TOML%\tomlc17.c
 if errorlevel 1 exit /b 1
 
-rem App code
-cl %COMMON% /std:c++20 /W4 /WX src\*.cpp
+rem App code. C4062 as an error: every switch on an enum must handle all members.
+cl %COMMON% /std:c++20 /W4 /WX /we4062 src\*.cpp
 if errorlevel 1 exit /b 1
 
 rem Resources (app icon)

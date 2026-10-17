@@ -52,7 +52,7 @@ Nothing queued. Pick from the v1 features and bugs below.
 - [x] F3 Ahead/behind counts. Switch status to `git status --porcelain=v2 -z --branch` to get status, upstream and ahead/behind in one process launch.
 - [ ] F4 Auto-fetch (settings exist but are unused).
 - [x] F5 Repo refresh when the window regains focus, and on F5. The file list is stale until the app runs a Git action.
-- [ ] F6 History: commit details and changed files.
+- [x] F6 History: commit details and changed files.
 - [x] F7 Changed-file path filter.
 - [x] F8 Branch state markers (local / remote / tracking all render the same).
 - [ ] F9 Remove a repository from the recent list; repository health warnings.

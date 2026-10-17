@@ -12,6 +12,8 @@ enum class JobKind
     OPEN_REPO,       // text: path to validate and load; text2: message if it isn't a repo
     REFRESH,
     LOAD_DIFF,       // file: the file to diff
+    LOAD_COMMIT,     // text: commit hash
+    LOAD_COMMIT_DIFF, // text: commit hash, file: the file in that commit
     COMMIT,          // paths: files to commit, text: summary, text2: description
     CHECKOUT_BRANCH, // text: branch name, flag: is a remote branch
     CREATE_BRANCH,   // text: branch name
@@ -41,6 +43,8 @@ struct JobResult
     RepoSnapshot snapshot;
     std::string diff;
     std::string diff_path; // file the diff belongs to
+    std::string commit_hash; // for LOAD_COMMIT and LOAD_COMMIT_DIFF
+    CommitDetails commit_details;
     std::string git_executable; // for FIND_GIT
 };
 

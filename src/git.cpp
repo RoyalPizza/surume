@@ -16,6 +16,8 @@ constexpr DWORD POLL_INTERVAL_MILLISECONDS = 10;
 constexpr DWORD PIPE_READ_SIZE = 4096;
 constexpr int MAX_LOG_COMMITS = 100;
 constexpr char LOG_FIELD_SEPARATOR = '\x1f';
+constexpr size_t LOG_FIELD_COUNT = 5;     // short hash, hash, author, date, subject
+constexpr size_t DETAILS_FIELD_COUNT = 5; // hash, author, email, date, message
 constexpr size_t STATUS_V2_MIN_ENTRY = 3; // "? x"
 // Space-separated fields before the path in porcelain v2 entries
 constexpr int ORDINARY_FIELDS = 8;  // "1 XY sub mH mI mW hH hI path"
@@ -539,7 +541,8 @@ bool git_get_log(const std::string& repo_path, std::vector<CommitInfo>& commits)
     snprintf(max_count, sizeof(max_count), "--max-count=%d", MAX_LOG_COMMITS);
 
     GitResult result;
-    if (!git_run(repo_path, { "log", max_count, "--format=%h%x1f%an%x1f%ar%x1f%s" }, result))
+    if (!git_run(repo_path, { "log", max_count, "--format=%h%x1f%H%x1f%an%x1f%ar%x1f%s" },
+        result))
     {
         LOG_WARN("git_get_log failed (exit=%d): %s", result.exit_code,
             trim_end(result.error_output).c_str());
@@ -549,18 +552,104 @@ bool git_get_log(const std::string& repo_path, std::vector<CommitInfo>& commits)
     for (const std::string& line : split(result.output, '\n'))
     {
         std::vector<std::string> fields = split(line, LOG_FIELD_SEPARATOR);
-        if (fields.size() < 4)
+        if (fields.size() < LOG_FIELD_COUNT)
         {
             continue;
         }
 
         CommitInfo commit;
         commit.hash = fields[0];
-        commit.author = fields[1];
-        commit.date = fields[2];
-        commit.subject = fields[3];
+        commit.full_hash = fields[1];
+        commit.author = fields[2];
+        commit.date = fields[3];
+        commit.subject = fields[4];
         commits.push_back(commit);
     }
+    return true;
+}
+
+// Parse "git show --name-status -z" output: a status token ("M", "A", "D", "R100", ...)
+// followed by one path, or two (old, new) for renames and copies.
+static void parse_name_status(const std::string& output, std::vector<FileStatus>& files)
+{
+    std::vector<std::string> tokens = split(output, '\0');
+    size_t i = 0;
+    while (i < tokens.size())
+    {
+        const std::string& status = tokens[i];
+        ++i;
+        if (status.empty() || i >= tokens.size())
+        {
+            continue;
+        }
+
+        FileStatus file;
+        file.index_status = status[0];
+        if (status[0] == 'R' || status[0] == 'C')
+        {
+            if (i + 1 >= tokens.size())
+            {
+                break;
+            }
+            file.old_path = tokens[i];
+            file.path = tokens[i + 1];
+            i += 2;
+        }
+        else
+        {
+            file.path = tokens[i];
+            ++i;
+        }
+        files.push_back(file);
+    }
+}
+
+bool git_get_commit_details(const std::string& repo_path, const std::string& hash,
+    CommitDetails& details)
+{
+    details = {};
+    GitResult result;
+    if (!git_run(repo_path, { "show", "-s", "--date=format:%Y-%m-%d %H:%M",
+        "--format=%H%x1f%an%x1f%ae%x1f%ad%x1f%B", hash }, result))
+    {
+        return false;
+    }
+
+    std::vector<std::string> fields = split(result.output, LOG_FIELD_SEPARATOR);
+    if (fields.size() < DETAILS_FIELD_COUNT)
+    {
+        return false;
+    }
+    details.full_hash = fields[0];
+    details.author = fields[1];
+    details.email = fields[2];
+    details.date = fields[3];
+    details.message = trim_end(fields[4]);
+
+    if (git_run(repo_path, { "show", "--format=", "--name-status", "-z", "-M",
+        "--diff-merges=first-parent", hash }, result))
+    {
+        parse_name_status(result.output, details.files);
+    }
+    return true;
+}
+
+bool git_get_commit_file_diff(const std::string& repo_path, const std::string& hash,
+    const FileStatus& file, std::string& diff)
+{
+    std::vector<std::string> args = { "--literal-pathspecs", "show", "--format=", "-M",
+        "--diff-merges=first-parent", hash, "--", file.path };
+    if (!file.old_path.empty())
+    {
+        args.push_back(file.old_path);
+    }
+
+    GitResult result;
+    if (!git_run(repo_path, args, result) || result.output.empty())
+    {
+        return false;
+    }
+    diff = result.output;
     return true;
 }
 
