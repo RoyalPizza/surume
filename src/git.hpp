@@ -72,6 +72,11 @@ bool git_get_status(const std::string& repo_path, std::vector<FileStatus>& files
 // together). Untracked files diff against an empty file. Returns false if git produced none.
 bool git_get_diff(const std::string& repo_path, const FileStatus& file, std::string& diff);
 
+// Split a unified diff into classified lines (ranges into diff) and report the widest line
+// in columns, counting a tab as 4.
+void git_parse_diff_lines(const std::string& diff, std::vector<DiffLine>& lines,
+    int& max_columns);
+
 // Read branch, branches, status and log into snapshot. Returns false if the status query
 // fails (the repository is unusable); lists are left empty for any other query that fails.
 bool git_load_snapshot(const std::string& repo_path, RepoSnapshot& snapshot);

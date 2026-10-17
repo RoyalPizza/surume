@@ -382,6 +382,18 @@ static void test_diff(const std::string& root)
     binary_file.worktree_status = 'M';
     check(git_get_diff(repo, binary_file, diff) && diff.find("Binary files") != std::string::npos,
         "binary change is reported as binary");
+
+    std::vector<DiffLine> lines;
+    int max_columns = 0;
+    std::string sample = "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-old\n+\tnew\n ctx";
+    git_parse_diff_lines(sample, lines, max_columns);
+    check(lines.size() == 7 && lines[0].kind == DiffLineKind::HEADER &&
+        lines[1].kind == DiffLineKind::HEADER && lines[2].kind == DiffLineKind::HEADER &&
+        lines[3].kind == DiffLineKind::HUNK && lines[4].kind == DiffLineKind::REMOVED &&
+        lines[5].kind == DiffLineKind::ADDED && lines[6].kind == DiffLineKind::CONTEXT,
+        "diff lines classified");
+    check(max_columns == 18 && sample.substr(lines[5].start, lines[5].length) == "+\tnew",
+        "diff line ranges and widest line (tab counts as 4)");
 }
 
 static void test_persistence(const std::string& root)

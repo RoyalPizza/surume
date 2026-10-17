@@ -46,6 +46,23 @@ struct FileStatus
     bool is_conflicted = false; // unmerged: a merge, rebase or stash pop left conflicts
 };
 
+enum class DiffLineKind
+{
+    ADDED,
+    REMOVED,
+    HUNK,
+    HEADER,  // "diff --git", "index", "---"/"+++", "Binary files"
+    CONTEXT,
+};
+
+// One line of a diff, as a range into the diff text. Parsed once when the diff loads.
+struct DiffLine
+{
+    int start = 0;
+    int length = 0;
+    DiffLineKind kind = DiffLineKind::CONTEXT;
+};
+
 struct CommitInfo
 {
     std::string hash;    // short hash
@@ -117,6 +134,8 @@ struct AppState
     NavMode nav_mode = NavMode::CHANGES;
     std::string selected_file_path; // empty when no file is selected
     std::string current_diff;       // diff of selected_file_path, once loaded
+    std::vector<DiffLine> diff_lines; // current_diff split and classified
+    int diff_max_columns = 0;         // widest line, for the horizontal scroll range
     bool is_large_diff_confirmed = false; // user chose to show a diff over the size limit
     float left_column_width = 280.0f; // unscaled; persisted
 

@@ -1,3 +1,4 @@
+#include "git.hpp"
 #include "gui.hpp"
 #include "jobs.hpp"
 #include "log.hpp"
@@ -622,6 +623,13 @@ static void queue_diff(const AppState& state)
 // diff, since the file may have changed too.
 // Forget unticks for files that are no longer changed, so a file that changes again later
 // starts ticked like any new change.
+static void clear_diff(AppState& state)
+{
+    state.current_diff.clear();
+    state.diff_lines.clear();
+    state.diff_max_columns = 0;
+}
+
 static void prune_unticked(AppState& state)
 {
     std::unordered_map<std::string, bool> kept;
@@ -659,7 +667,7 @@ static void apply_snapshot(AppState& state, const RepoSnapshot& snapshot)
         }
     }
     state.selected_file_path.clear();
-    state.current_diff.clear();
+    clear_diff(state);
 }
 
 static void apply_open_repo(AppState& state, const JobResult& result)
@@ -674,7 +682,7 @@ static void apply_open_repo(AppState& state, const JobResult& result)
         state.recent_repos.end());
     state.recent_repos.insert(state.recent_repos.begin(), root);
     state.selected_file_path.clear();
-    state.current_diff.clear();
+    clear_diff(state);
     state.status_message.clear();
     state.unticked_paths.clear();
     state.is_large_diff_confirmed = false;
@@ -756,6 +764,7 @@ static void apply_result(AppState& state, const JobResult& result)
         if (result.diff_path == state.selected_file_path)
         {
             state.current_diff = result.is_success ? result.diff : "";
+            git_parse_diff_lines(state.current_diff, state.diff_lines, state.diff_max_columns);
         }
         return;
     }

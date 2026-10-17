@@ -77,15 +77,6 @@ constexpr ImGuiWindowFlags MAIN_WINDOW_FLAGS =
     ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoSavedSettings |
     ImGuiWindowFlags_NoBringToFrontOnFocus;
 
-enum class DiffLineKind
-{
-    ADDED,
-    REMOVED,
-    HUNK,
-    HEADER,
-    CONTEXT,
-};
-
 struct FileBadge
 {
     char letter = 'M';
@@ -837,6 +828,7 @@ static void render_file_row(AppState& state, int index, const FileRowLayout& lay
     {
         state.selected_file_path = file.path;
         state.current_diff.clear();
+        state.diff_lines.clear();
         state.is_large_diff_confirmed = false;
         request(state, RequestKind::LOAD_DIFF);
     }
@@ -910,11 +902,16 @@ static void render_file_list(AppState& state)
     layout.badge_x = ImGui::GetCursorPosX() + ImGui::GetFrameHeight() + style.ItemSpacing.x;
     layout.path_x = layout.badge_x + ImGui::CalcTextSize("M").x + style.ItemSpacing.x * 2;
     layout.path_width = ImGui::GetContentRegionAvail().x - layout.path_x;
-    for (int i = 0; i < (int)state.repo.files.size(); ++i)
+    ImGuiListClipper clipper;
+    clipper.Begin((int)state.repo.files.size());
+    while (clipper.Step())
     {
-        ImGui::PushID(i);
-        render_file_row(state, i, layout);
-        ImGui::PopID();
+        for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i)
+        {
+            ImGui::PushID(i);
+            render_file_row(state, i, layout);
+            ImGui::PopID();
+        }
     }
 }
 
@@ -1008,11 +1005,16 @@ static void render_history_tab(const AppState& state)
         return;
     }
 
-    for (int i = 0; i < (int)state.repo.commits.size(); ++i)
+    ImGuiListClipper clipper;
+    clipper.Begin((int)state.repo.commits.size());
+    while (clipper.Step())
     {
-        ImGui::PushID(i);
-        render_commit_row(state.repo.commits[i]);
-        ImGui::PopID();
+        for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i)
+        {
+            ImGui::PushID(i);
+            render_commit_row(state.repo.commits[i]);
+            ImGui::PopID();
+        }
     }
 
     ImGui::EndChild();
@@ -1067,44 +1069,14 @@ static void render_left_column(AppState& state)
 // Right content
 // -------------------------------------------------------------------------
 
-static bool starts_with_three(const char* start, const char* end, char c)
-{
-    return end - start > 2 && start[0] == c && start[1] == c && start[2] == c;
-}
-
-static DiffLineKind classify_diff_line(const char* start, const char* end)
-{
-    char first = start < end ? start[0] : ' ';
-    bool is_file_header = starts_with_three(start, end, '+') || starts_with_three(start, end, '-');
-
-    if (first == '+' && !is_file_header)
-    {
-        return DiffLineKind::ADDED;
-    }
-    if (first == '-' && !is_file_header)
-    {
-        return DiffLineKind::REMOVED;
-    }
-    if (first == '@')
-    {
-        return DiffLineKind::HUNK;
-    }
-    // "diff --git", "index", "Binary files", and the ---/+++ file headers
-    if (is_file_header || first == 'd' || first == 'i' || first == 'B')
-    {
-        return DiffLineKind::HEADER;
-    }
-    return DiffLineKind::CONTEXT;
-}
-
-static void render_diff_line(const char* start, const char* end, float line_height,
-    float window_x, float window_width)
+static void render_diff_line(const char* start, const char* end, DiffLineKind kind,
+    float line_height, float window_x, float window_width)
 {
     float y = ImGui::GetCursorScreenPos().y;
     ImVec4 text_color = ImGui::GetStyleColorVec4(ImGuiCol_Text);
     ImU32 background = 0;
 
-    switch (classify_diff_line(start, end))
+    switch (kind)
     {
         case DiffLineKind::ADDED:
             text_color = COLOR_DIFF_ADDED_TEXT;
@@ -1144,40 +1116,44 @@ static ImFont* mono_font()
     return atlas->Fonts.Size > 1 ? atlas->Fonts[1] : nullptr;
 }
 
-static void render_diff(const std::string& diff)
+// Only the visible lines are drawn; the content width comes from the widest line so the
+// horizontal scroll range covers lines that aren't drawn.
+static void render_diff(const AppState& state)
 {
+    ImGui::PushFont(mono_font(), 0.0f);
+    float char_width = ImGui::CalcTextSize("M").x;
+    ImGui::SetNextWindowContentSize(ImVec2(state.diff_max_columns * char_width, 0.0f));
     ImGui::BeginChild("##diffview", ImGui::GetContentRegionAvail(), false,
         ImGuiWindowFlags_HorizontalScrollbar);
-    ImGui::PushFont(mono_font(), 0.0f);
 
-    if (diff.empty())
+    if (state.diff_lines.empty())
     {
         ImGui::TextDisabled("(no diff output)");
-        ImGui::PopFont();
         ImGui::EndChild();
+        ImGui::PopFont();
         return;
     }
 
     float line_height = ImGui::GetTextLineHeightWithSpacing();
     float window_x = ImGui::GetWindowPos().x;
     float window_width = ImGui::GetWindowSize().x;
+    const char* text = state.current_diff.c_str();
 
-    const char* line_start = diff.c_str();
-    const char* text_end = line_start + diff.size();
-    while (line_start < text_end)
+    ImGuiListClipper clipper;
+    clipper.Begin((int)state.diff_lines.size(), line_height);
+    while (clipper.Step())
     {
-        const char* line_end = line_start;
-        while (line_end < text_end && *line_end != '\n')
+        for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i)
         {
-            ++line_end;
+            const DiffLine& line = state.diff_lines[i];
+            const char* start = text + line.start;
+            render_diff_line(start, start + line.length, line.kind, line_height, window_x,
+                window_width);
         }
-
-        render_diff_line(line_start, line_end, line_height, window_x, window_width);
-        line_start = line_end < text_end ? line_end + 1 : text_end;
     }
 
-    ImGui::PopFont();
     ImGui::EndChild();
+    ImGui::PopFont();
 }
 
 static void render_centered_hint(const char* text, float y)
@@ -1258,7 +1234,7 @@ static void render_diff_or_placeholder(AppState& state, ImVec2 available)
         }
         return;
     }
-    render_diff(diff);
+    render_diff(state);
 }
 
 static void render_right_content(AppState& state)

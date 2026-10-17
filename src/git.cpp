@@ -22,6 +22,7 @@ constexpr int ORDINARY_FIELDS = 8;  // "1 XY sub mH mI mW hH hI path"
 constexpr int RENAME_FIELDS = 9;    // "2 XY sub mH mI mW hH hI Xscore path"
 constexpr int UNMERGED_FIELDS = 10; // "u XY sub m1 m2 m3 mW h1 h2 h3 path"
 constexpr DWORD RESOLVED_PATH_SIZE = 32768; // longest Windows path
+constexpr int DIFF_TAB_COLUMNS = 4;
 constexpr const char* EMPTY_TREE_HASH = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 // Convert UTF-8 to a null-terminated UTF-16 buffer for Win32 W functions.
@@ -745,6 +746,66 @@ bool git_get_diff(const std::string& repo_path, const FileStatus& file, std::str
     LOG_WARN("git_get_diff produced no output for '%s' (exit=%d err='%s')",
         file.path.c_str(), result.exit_code, trim_end(result.error_output).c_str());
     return false;
+}
+
+static bool starts_with_three(const char* start, const char* end, char c)
+{
+    return end - start > 2 && start[0] == c && start[1] == c && start[2] == c;
+}
+
+static DiffLineKind classify_diff_line(const char* start, const char* end)
+{
+    char first = start < end ? start[0] : ' ';
+    bool is_file_header = starts_with_three(start, end, '+') || starts_with_three(start, end, '-');
+    if (first == '+' && !is_file_header)
+    {
+        return DiffLineKind::ADDED;
+    }
+    if (first == '-' && !is_file_header)
+    {
+        return DiffLineKind::REMOVED;
+    }
+    if (first == '@')
+    {
+        return DiffLineKind::HUNK;
+    }
+    if (is_file_header || first == 'd' || first == 'i' || first == 'B' || first == 'n' ||
+        first == 's' || first == 'r')
+    {
+        return DiffLineKind::HEADER; // also "new file mode", "similarity", "rename from"
+    }
+    return DiffLineKind::CONTEXT;
+}
+
+void git_parse_diff_lines(const std::string& diff, std::vector<DiffLine>& lines,
+    int& max_columns)
+{
+    lines.clear();
+    max_columns = 0;
+    const char* text = diff.c_str();
+    int size = (int)diff.size();
+    int start = 0;
+    while (start < size)
+    {
+        int end = start;
+        int columns = 0;
+        while (end < size && text[end] != '\n')
+        {
+            columns += text[end] == '\t' ? DIFF_TAB_COLUMNS : 1;
+            ++end;
+        }
+
+        DiffLine line;
+        line.start = start;
+        line.length = end - start;
+        line.kind = classify_diff_line(text + start, text + end);
+        lines.push_back(line);
+        if (columns > max_columns)
+        {
+            max_columns = columns;
+        }
+        start = end + 1;
+    }
 }
 
 bool git_load_snapshot(const std::string& repo_path, RepoSnapshot& snapshot)
