@@ -33,7 +33,7 @@ Nothing queued. Pick from the v1 features and bugs below.
 - [x] U1 **View > Changes / History does nothing.** It sets `state.nav_mode`, but the tab bar never reads it.
 - [x] U2 **File > Exit does nothing.**
 - [ ] U3 **Commit button is enabled when nothing is staged.**
-- [ ] U4 **Missing Git isn't handled.** `is_git_found` is never checked by the GUI: no error is shown and repo actions stay enabled.
+- [x] U4 **Missing Git isn't handled.** `is_git_found` is never checked by the GUI: no error is shown and repo actions stay enabled.
 - [ ] U5 **Large diffs are slow.** `render_diff` draws every line every frame; use `ImGuiListClipper`.
 - [ ] U6 **Commit text carries across repo switches**, and the 1024-byte description buffer truncates silently.
 - [x] U7 **Long relative dates** ("2 years, 3 months ago") overlap the hash in History.

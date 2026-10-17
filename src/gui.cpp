@@ -107,6 +107,12 @@ static float scaled(float pixels)
     return pixels * ui_scale;
 }
 
+// Opening repositories needs git. Allowed until the startup check says it's missing.
+static bool can_open_repos(const AppState& state)
+{
+    return state.is_git_found || !state.is_git_checked;
+}
+
 static void request(AppState& state, RequestKind kind)
 {
     Request request;
@@ -389,7 +395,7 @@ static void render_file_menu(AppState& state)
         return;
     }
 
-    if (ImGui::MenuItem("Open Repository..."))
+    if (ImGui::MenuItem("Open Repository...", nullptr, false, can_open_repos(state)))
     {
         request(state, RequestKind::OPEN_REPO_DIALOG);
     }
@@ -541,6 +547,7 @@ static void render_repo_picker(AppState& state)
 
     ImGui::TextDisabled("Recent Repositories");
     ImGui::Separator();
+    ImGui::BeginDisabled(!can_open_repos(state));
     if (state.recent_repos.empty())
     {
         ImGui::TextDisabled("No recent repositories");
@@ -567,6 +574,7 @@ static void render_repo_picker(AppState& state)
         request(state, RequestKind::OPEN_REPO_DIALOG);
         ImGui::CloseCurrentPopup();
     }
+    ImGui::EndDisabled();
     ImGui::EndPopup();
 }
 
@@ -1052,8 +1060,32 @@ static void render_centered_hint(const char* text, float y)
     ImGui::TextDisabled("%s", text);
 }
 
+static void render_git_missing(ImVec2 available)
+{
+    const char* lines[] = {
+        "Git is not installed or could not be found.",
+        "Install Git for Windows from git-scm.com and make sure git is on PATH,",
+        "then restart Surume.",
+    };
+    float line_height = ImGui::GetTextLineHeightWithSpacing();
+    float y = (available.y - line_height * 3) * 0.5f;
+    for (const char* line : lines)
+    {
+        float text_width = ImGui::CalcTextSize(line).x;
+        ImGui::SetCursorPos(ImVec2((available.x - text_width) * 0.5f, y));
+        ImGui::TextUnformatted(line);
+        y += line_height;
+    }
+}
+
 static void render_empty_state(AppState& state, ImVec2 available)
 {
+    if (!can_open_repos(state))
+    {
+        render_git_missing(available);
+        return;
+    }
+
     float button_height = ImGui::GetFrameHeight();
     ImGui::SetCursorPos(ImVec2((available.x - scaled(EMPTY_STATE_BUTTON_WIDTH)) * 0.5f,
         (available.y - button_height * 2) * 0.5f));

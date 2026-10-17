@@ -90,6 +90,7 @@ struct AppState
     std::string active_repo_name;
     int repo_generation = 0; // bumped on every switch; results for older generations are dropped
     std::vector<std::string> recent_repos;
+    std::string restore_repo; // last active repository from settings, until it reopens or fails
     RepoSnapshot repo;
 
     // View
@@ -108,6 +109,7 @@ struct AppState
     AppSettings settings;
 
     // Git
+    bool is_git_checked = false; // the startup check for git has finished
     bool is_git_found = false;
     std::string git_executable;
 

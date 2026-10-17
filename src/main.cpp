@@ -597,11 +597,9 @@ static void app_init(AppState& state, const std::string& app_data_dir)
     jobs_push(make_job(state, JobKind::FIND_GIT));
 
     // Restore the last active repository once the worker has checked for Git
-    if (!state.active_repo.empty())
+    if (!state.restore_repo.empty())
     {
-        std::string last_repo = state.active_repo;
-        state.active_repo.clear();
-        queue_open_repo(state, last_repo, "Last repository is no longer available.");
+        queue_open_repo(state, state.restore_repo, "Last repository is no longer available.");
     }
 }
 
@@ -687,6 +685,7 @@ static void apply_result(AppState& state, const JobResult& result)
     switch (result.kind)
     {
         case JobKind::FIND_GIT:
+            state.is_git_checked = true;
             state.is_git_found = result.is_success;
             state.git_executable = result.git_executable;
             if (!result.is_success)
@@ -698,12 +697,17 @@ static void apply_result(AppState& state, const JobResult& result)
         case JobKind::OPEN_REPO:
             if (result.is_success)
             {
+                state.restore_repo.clear();
                 apply_open_repo(state, result);
             }
-            else
+            else if (state.is_git_found)
             {
+                // With git working, a failed restore means the repository is really gone
+                state.restore_repo.clear();
                 state.status_message = result.error;
             }
+            // Without git every open fails; keep the message that says so, and keep
+            // remembering the repository for the next launch
             return;
 
         case JobKind::REFRESH:

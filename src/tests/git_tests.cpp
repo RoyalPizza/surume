@@ -269,7 +269,15 @@ static void test_persistence(const std::string& root)
 
     AppState loaded;
     persistence_load(loaded, dir);
-    check_equal(loaded.active_repo, saved.active_repo, "active repo round-trips");
+    check_equal(loaded.restore_repo, saved.active_repo, "active repo round-trips");
+
+    // A repository that couldn't be reopened yet (e.g. git missing) stays remembered
+    AppState unopened;
+    unopened.restore_repo = "C:\\repos\\later";
+    check(persistence_save(unopened, dir), "save with only a restore repo");
+    AppState reloaded;
+    persistence_load(reloaded, dir);
+    check_equal(reloaded.restore_repo, unopened.restore_repo, "unopened repo stays remembered");
     check(loaded.recent_repos == saved.recent_repos, "recent repos round-trip");
     check(loaded.left_column_width == 333.0f, "column width round-trips");
     check_equal(loaded.settings.git_path, saved.settings.git_path, "git path round-trips");

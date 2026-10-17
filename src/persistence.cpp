@@ -79,8 +79,8 @@ static void load_repositories(AppState& state, const std::string& path)
     toml_datum_t active = toml_get(toml.toptab, "active");
     if (active.type == TOML_STRING)
     {
-        state.active_repo = active.u.s;
-        LOG_INFO("persistence: active_repo='%s'", state.active_repo.c_str());
+        state.restore_repo = active.u.s;
+        LOG_INFO("persistence: restore_repo='%s'", state.restore_repo.c_str());
     }
 
     toml_datum_t repos = toml_get(toml.toptab, "repos");
@@ -157,7 +157,9 @@ static bool save_repositories(const AppState& state, const std::string& path)
         return false;
     }
 
-    fprintf(file, "active = \"%s\"\n", escape_toml(state.active_repo).c_str());
+    // Until the remembered repository reopens, keep remembering it
+    const std::string& active = state.active_repo.empty() ? state.restore_repo : state.active_repo;
+    fprintf(file, "active = \"%s\"\n", escape_toml(active).c_str());
     fprintf(file, "repos  = [\n");
     for (const std::string& repo : state.recent_repos)
     {
