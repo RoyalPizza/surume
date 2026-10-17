@@ -1,6 +1,6 @@
-#include "Persistence.h"
-#include "Platform.h"
-#include "Log.h"
+#include "persistence.hpp"
+#include "platform.hpp"
+#include "log.hpp"
 #include <cstdio>
 #include <string>
 

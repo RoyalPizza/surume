@@ -1,7 +1,7 @@
-#include "Ui.h"
-#include "App.h"
-#include "Git.h"
-#include "Log.h"
+#include "ui.hpp"
+#include "app.hpp"
+#include "git.hpp"
+#include "log.hpp"
 #include "imgui.h"
 #include <cstdio>
 #include <cstring>
@@ -19,9 +19,9 @@ static constexpr float kMaxColumnWidth     = 600.0f;
 
 static void RenderAboutModal() {
     ImGui::SetNextWindowSize(ImVec2(320, 0), ImGuiCond_Always);
-    if (!ImGui::BeginPopupModal("About Gitaluna", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    if (!ImGui::BeginPopupModal("About Surume", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
 
-    ImGui::Text("Gitaluna");
+    ImGui::Text("Surume");
     ImGui::TextDisabled("v0.1.0 — Milestone 1");
     ImGui::Spacing();
     ImGui::TextWrapped("A native C++ desktop Git client built with Dear ImGui.");
@@ -284,7 +284,7 @@ static void RenderMenuBar(AppState& state, PlatformContext& ctx) {
     }
 
     if (ImGui::BeginMenu("Help")) {
-        if (ImGui::MenuItem("About Gitaluna")) {
+        if (ImGui::MenuItem("About Surume")) {
             LOG_INFO("Menu: Help > About");
             state.showAboutModal = true;
         }
@@ -744,7 +744,7 @@ void Ui::Render(AppState& state, PlatformContext& ctx) {
     }
 
     // Open modals before rendering the main window so they work correctly
-    if (state.showAboutModal)        { ImGui::OpenPopup("About Gitaluna");  state.showAboutModal        = false; }
+    if (state.showAboutModal)        { ImGui::OpenPopup("About Surume");  state.showAboutModal        = false; }
     if (state.showSettingsModal)     { ImGui::OpenPopup("Settings");         state.showSettingsModal     = false; }
     if (state.showNewBranchModal)    { ImGui::OpenPopup("New Branch");       state.showNewBranchModal    = false; }
     if (state.showDeleteBranchModal) { ImGui::OpenPopup("Delete Branch");    state.showDeleteBranchModal = false; }

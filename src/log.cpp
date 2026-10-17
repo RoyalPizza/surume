@@ -1,6 +1,8 @@
-#include "Log.h"
+#include "log.hpp"
 
-#ifdef GITALUNA_DEBUG
+#ifdef SURUME_DEBUG
+
+#include "platform.hpp"
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -22,22 +24,19 @@ static const char* Basename(const char* path) {
 }
 
 void Log::Init() {
-    wchar_t exePath[MAX_PATH] = {};
-    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+    // Lives in app data next to the settings files, so bin\ only holds binaries
+    std::string dir = Platform::GetAppDataDir();
+    if (dir.empty()) return;
+    std::string path = dir + "surume_debug.log";
 
-    wchar_t* lastSlash = wcsrchr(exePath, L'\\');
-    if (lastSlash) *(lastSlash + 1) = L'\0';
-    wcscat_s(exePath, MAX_PATH, L"gitaluna_debug.log");
+    wchar_t widePath[MAX_PATH] = {};
+    MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, widePath, MAX_PATH);
 
-    _wfopen_s(&g_log, exePath, L"w");
+    _wfopen_s(&g_log, widePath, L"w");
     if (!g_log) return;
 
-    // Print log path in narrow chars for the first line
-    char narrow[MAX_PATH * 2] = {};
-    WideCharToMultiByte(CP_UTF8, 0, exePath, -1, narrow, sizeof(narrow), nullptr, nullptr);
-
-    fprintf(g_log, "=== Gitaluna Debug Log ===\n");
-    fprintf(g_log, "Log file: %s\n", narrow);
+    fprintf(g_log, "=== Surume Debug Log ===\n");
+    fprintf(g_log, "Log file: %s\n", path.c_str());
     fprintf(g_log, "==========================\n\n");
     fflush(g_log);
 }

@@ -30,6 +30,6 @@ namespace Platform {
     void OpenInExplorer(const std::string& path);
     void OpenInTerminal(void* parentHwnd, const std::string& path);
 
-    // App data directory: %APPDATA%\Gitaluna\ (created on first call)
+    // App data directory: %APPDATA%\Surume\ (created on first call)
     std::string GetAppDataDir();
 }

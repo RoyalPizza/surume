@@ -7,8 +7,8 @@
 #include <shlobj.h>
 #include <shellapi.h>
 
-#include "Platform.h"
-#include "Log.h"
+#include "platform.hpp"
+#include "log.hpp"
 #include "imgui.h"
 #include "imgui_impl_win32.h"
 #include "imgui_impl_dx11.h"
@@ -60,7 +60,7 @@ static bool CreateD3DDevice(PlatformContext& ctx) {
     sd.SwapEffect                 = DXGI_SWAP_EFFECT_DISCARD;
 
     UINT flags = 0;
-#ifdef GITALUNA_DEBUG
+#ifdef SURUME_DEBUG
     flags |= D3D11_CREATE_DEVICE_DEBUG;
     LOG_DEBUG("D3D11_CREATE_DEVICE_DEBUG flag set");
 #endif
@@ -138,7 +138,7 @@ bool Platform::Init(PlatformContext& ctx, const char* title, int width, int heig
     wc.lpfnWndProc  = WndProc;
     wc.hInstance    = GetModuleHandleW(nullptr);
     wc.hCursor      = LoadCursorW(nullptr, IDC_ARROW);
-    wc.lpszClassName = L"GitalunaWnd";
+    wc.lpszClassName = L"SurumeWnd";
 
     if (!RegisterClassExW(&wc)) {
         LOG_ERROR("RegisterClassExW failed: GetLastError=%u", (unsigned)GetLastError());
@@ -147,7 +147,7 @@ bool Platform::Init(PlatformContext& ctx, const char* title, int width, int heig
     LOG_DEBUG("Window class registered");
 
     HWND hwnd = CreateWindowExW(
-        0, L"GitalunaWnd", wtitle,
+        0, L"SurumeWnd", wtitle,
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT, width, height,
         nullptr, nullptr, wc.hInstance, nullptr);
@@ -258,7 +258,7 @@ void Platform::Shutdown(PlatformContext& ctx) {
 
     if (ctx.hwnd) {
         DestroyWindow(static_cast<HWND>(ctx.hwnd));
-        UnregisterClassW(L"GitalunaWnd", GetModuleHandleW(nullptr));
+        UnregisterClassW(L"SurumeWnd", GetModuleHandleW(nullptr));
         ctx.hwnd = nullptr;
         LOG_DEBUG("Window destroyed");
     }
@@ -352,7 +352,7 @@ std::string Platform::GetAppDataDir() {
         LOG_ERROR("Platform::GetAppDataDir SHGetFolderPathW failed");
         return "";
     }
-    wcscat_s(path, MAX_PATH, L"\\Gitaluna\\");
+    wcscat_s(path, MAX_PATH, L"\\Surume\\");
     CreateDirectoryW(path, nullptr);
 
     char narrow[MAX_PATH * 2] = {};

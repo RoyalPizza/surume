@@ -1,5 +1,5 @@
 #pragma once
-#include "Model.h"
+#include "model.hpp"
 
 namespace App {
     void Init(AppState& state);

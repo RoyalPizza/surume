@@ -1,16 +1,16 @@
-# Gitaluna Architecture
+# Surume Architecture
 
 ## Language and UI
 
 - C++20 or newer.
 - Dear ImGui for immediate-mode UI.
-- Windows v1 uses a native Win32 window with Dear ImGui's Win32 + Direct3D 11 backend, matching the Pixeluna-style startup and rendering stack.
+- Windows v1 uses a native Win32 window with Dear ImGui's Win32 + Direct3D 11 backend.
 - Other platform backends are deferred.
-- CMake as the build system.
+- No build system: a plain `build.bat` calls MSVC `cl` directly.
 
 ## Engineering Principles
 
-- Use simple C-style C++: `.cpp` and `.h` files, plain structs, free functions, explicit state, minimal inheritance, and minimal template cleverness.
+- Use simple C-style C++: `.cpp` and `.hpp` files, plain structs, free functions, explicit state, minimal inheritance, and minimal template cleverness.
 - Prefer code that is easy to step through in a debugger.
 - Keep modules split by responsibility without building a deep framework layer.
 - Keep Dear ImGui panel code close to the state and operations it edits.
@@ -47,18 +47,19 @@ Reasons:
 
 The Git layer should still be isolated behind a service boundary so that selected operations can move to `libgit2` later if useful.
 
-The first version requires an installed `git` executable. Gitaluna should detect Git at startup or before the first Git-backed action, show a clear missing-Git error, and avoid repository actions that cannot run without Git.
+The first version requires an installed `git` executable. Surume should detect Git at startup or before the first Git-backed action, show a clear missing-Git error, and avoid repository actions that cannot run without Git.
 
 ## Major Modules
 
-- `App`: application startup, main loop, shutdown.
-- `Ui`: Dear ImGui screens, panels, dialogs, style, and layout.
-- `Git`: Git command execution, parsing, repository state, status, diff, branch, commit, and sync operations.
-- `Model`: application state, repositories, selected file, selected branch, selected commit, settings.
-- `Jobs`: background task queue for Git operations.
-- `Platform`: filesystem dialogs, process launching, paths, clipboard, OS integration. Platform-specific implementations per OS (e.g., `platform_win32.cpp`).
-- `Persistence`: recent repositories, window layout, user preferences. Serialization via TOML using tomlc17.
-- `Logging`: diagnostic logs and user-visible operation results.
+- `main.cpp`: entry point and main loop. Also handles deferred requests from the UI (open repository dialog, repository switch, diff load) after each frame is presented.
+- `App`: startup (Git detection, loading persistence, restoring the last repository), per-frame tick (currently empty), shutdown, and repository state refresh.
+- `Ui`: Dear ImGui screens, panels, dialogs, and layout.
+- `Git`: Git command execution and parsing for status, diff, branches, commits, and log. Sync operations are not implemented yet.
+- `Model`: header-only. The central `AppState` struct and the plain data types it holds.
+- `Jobs`: background task queue for Git operations. Not implemented yet.
+- `Platform`: window and D3D11 setup, frame begin/present, folder dialog, open in Explorer/terminal, app-data path. Platform-specific implementations per OS (e.g., `platform_win32.cpp`).
+- `Persistence`: recent repositories, panel layout, user preferences. Serialization via TOML using tomlc17.
+- `Log`: diagnostic log file, compiled in only for debug builds (`SURUME_DEBUG`). User-visible operation results go through `AppState::statusMessage`.
 
 ## Git Command Execution
 
@@ -112,6 +113,8 @@ All potentially slow operations run outside the UI frame:
 
 The UI displays progress and stale-state indicators while jobs are active.
 
+Current code: there is no job system yet. Every Git call runs synchronously, on the UI thread, with a hardcoded 15 second timeout. Some calls happen from UI code mid-frame (checkout, branch create/delete, commit), and others are deferred to the main loop.
+
 ## Data Parsing
 
 Prefer machine-readable Git output where available:
@@ -125,6 +128,8 @@ Prefer machine-readable Git output where available:
 - `git remote`
 
 Avoid parsing human-oriented output unless no structured form exists.
+
+Current code uses `git status --porcelain -u` (porcelain v1, no `--branch`), `git branch --format=...`, `git branch -r --format=...`, `git log --format=...`, `git symbolic-ref --short HEAD`, and `git diff` / `git diff --cached` / `git diff --no-index`. Upstream, remote, and numstat queries are not used yet.
 
 Sync behavior should be based on the current branch's upstream remote when available. If no upstream exists, `origin` is the preferred default for fetch/publish language. If no upstream exists and multiple remotes exist without `origin`, the app should require an explicit remote choice before publishing instead of guessing.
 
@@ -143,7 +148,7 @@ The raw Git stderr can be shown behind a details disclosure for diagnosis.
 
 ## Persistence
 
-Persist locally under the user's platform app-data folder using TOML (tomlc17). The app-data folder name is `Gitaluna`; on Windows this resolves to `%APPDATA%\Gitaluna`.
+Persist locally under the user's platform app-data folder using TOML (tomlc17). The app-data folder name is `Surume`; on Windows this resolves to `%APPDATA%\Surume`.
 
 Repository history and general settings are stored in separate files:
 
@@ -152,16 +157,19 @@ Repository history and general settings are stored in separate files:
 
 The settings file stores:
 
-- Window size and panel layout.
-- UI preferences.
-- Git executable path.
-- Default open directory.
-- Other non-secret app settings.
+- Left column width (`left_column_width`).
+- Git executable path (`git_path`).
+- Default open directory (`default_open_dir`).
+- Auto-fetch enabled and interval (`auto_fetch_enabled`, `auto_fetch_interval_min`).
+
+Window size and other UI preferences are not stored yet. The Git path, default open directory, and auto-fetch settings are saved but not yet used: Git always runs as `git` from `PATH`, and the folder dialog ignores the default directory.
 
 The repository history file stores:
 
-- Recent repositories.
-- Last active repository.
+- Recent repositories (`repos`).
+- Last active repository (`active`).
+
+Both files are read once at startup and written only on clean shutdown.
 
 Settings files are stored under app data, not inside repositories.
 
@@ -169,11 +177,13 @@ Do not store credentials directly. Rely on Git credential helpers, OS keychains,
 
 ## Build Layout
 
-- Binaries output to `bin/`.
-- Intermediate files output to `obj/`.
-- Two CMake targets: `gitaluna` (release) and `gitaluna_debug` (debug).
+- `build.bat` builds a debug executable; `build.bat release` builds an optimized one.
+- The executable goes to `bin/surume.exe` and intermediate files to `obj/`.
+- Debug builds define `SURUME_DEBUG`, which enables the log file `%APPDATA%\Surume\surume_debug.log` (overwritten on each launch).
 
 ## Testing Strategy
+
+No tests exist yet. This section is the plan.
 
 ### Unit Tests
 
@@ -208,5 +218,5 @@ Exercise repositories with:
 
 ## Open Questions
 
-- Should the first diff viewer be custom-rendered ImGui text or a dedicated syntax-highlighted component?
+- Should the diff viewer stay custom-rendered ImGui text (the current implementation) or move to a dedicated syntax-highlighted component?
 - What is the minimum supported OS set?

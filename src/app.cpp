@@ -1,7 +1,7 @@
-#include "App.h"
-#include "Git.h"
-#include "Persistence.h"
-#include "Log.h"
+#include "app.hpp"
+#include "git.hpp"
+#include "persistence.hpp"
+#include "log.hpp"
 
 namespace App {
 

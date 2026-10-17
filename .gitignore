@@ -1,15 +1,6 @@
 # Build output
-build/
-build2/
 bin/
 obj/
-
-# CMake generated
-CMakeCache.txt
-CMakeFiles/
-cmake_install.cmake
-*.cmake
-!CMakeLists.txt
 
 # MSVC / Visual Studio
 .vs/

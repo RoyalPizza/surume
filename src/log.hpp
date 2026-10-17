@@ -1,6 +1,6 @@
 #pragma once
 
-#ifdef GITALUNA_DEBUG
+#ifdef SURUME_DEBUG
 
 namespace Log {
     void Init();
@@ -14,6 +14,11 @@ namespace Log {
 #define LOG_DEBUG(fmt, ...) Log::Write("DEBUG", __FILE__, __LINE__, fmt, ##__VA_ARGS__)
 
 #else
+
+namespace Log {
+    inline void Init() {}
+    inline void Shutdown() {}
+}
 
 #define LOG_INFO(...)  ((void)0)
 #define LOG_WARN(...)  ((void)0)

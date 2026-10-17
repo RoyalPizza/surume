@@ -1,10 +1,40 @@
-# Gitaluna Design
+# Surume Design
 
 ## Summary
 
-Gitaluna is a native C++ desktop Git client inspired by GitHub Desktop, built with Dear ImGui. The goal is to provide a fast, focused, visual workflow for day-to-day Git tasks: choosing repositories, reviewing changes, staging files, committing, branching, fetching, pulling, pushing, and resolving common sync states.
+Surume is a native C++ desktop Git client inspired by GitHub Desktop, built with Dear ImGui. The goal is to provide a fast, focused, visual workflow for day-to-day Git tasks: choosing repositories, reviewing changes, staging files, committing, branching, fetching, pulling, pushing, and resolving common sync states.
 
 The application should feel immediate and practical rather than decorative. Dear ImGui gives us a compact, tool-like interface with predictable controls, keyboard-friendly workflows, and minimal UI latency.
+
+## Current Status
+
+This document is the spec inherited from Gitaluna and is due for a redesign (see `tasks.md`). The code implements part of it:
+
+| Area | Status |
+| --- | --- |
+| Win32 + D3D11 window, vanilla dark ImGui style, app menu row | Done |
+| Fixed layout: header bar, left column with Changes/History tabs, resizable splitter, right content area | Done |
+| Open repository (folder dialog, repo-root validation), recent list, restore last repo on startup | Done |
+| Remove a repository from the recent list, repository health warnings | Not started |
+| Missing-Git detection | Partial: detected at startup, but no error is shown and repo actions stay enabled |
+| Changed file list with status badges (`?`, `A`, `M`, `D`, `R`) | Partial: one flat list, no staged/unstaged grouping, no conflicted/ignored states |
+| File path filter | Not started |
+| Unified text diff with line coloring | Done |
+| Binary and large-file placeholders | Not started |
+| Stage / unstage (single or all) | Not started |
+| Commit summary + description, commit staged changes | Done |
+| Branch picker: list, switch (remote-only creates a tracking branch), create | Done |
+| Branch state indicators (local / remote / tracking) | Not started: all three render the same |
+| Delete local branch | Done, from the Branch menu (not the picker) |
+| Ahead/behind counts | Not started |
+| Sync button (fetch / pull / push / publish) | Not started: button is a placeholder labelled "Fetch origin" |
+| Auto-fetch | Not started: settings are saved but unused |
+| History: commit list | Done |
+| History: commit details and changed files | Not started |
+| Settings dialog | Partial: saves Git path, default open dir and auto-fetch, but none of them affect behavior yet |
+| Async Git operations | Not started: every Git call blocks the UI thread |
+| Keyboard shortcuts, context menus | Not started |
+| File > Exit | Not working (menu item does nothing) |
 
 ## Product Goals
 
@@ -36,17 +66,17 @@ The application should feel immediate and practical rather than decorative. Dear
 
 The current repository is shown as a button in the top bar. Clicking it opens a compact popup listing recent repositories. Switching is a single click from that list. An "Open..." entry at the bottom of the popup triggers a folder dialog to add a new repository. There is no separate full-screen add-repository flow in the first version.
 
-The first version only accepts valid Git repository root folders. Validation uses Git itself rather than checking only for a `.git` directory. If the selected folder is not inside a Git work tree, or is a subfolder inside a larger repository, Gitaluna rejects it and shows a clear error instead of adding it to the recent repository list.
+The first version only accepts valid Git repository root folders. Validation uses Git itself rather than checking only for a `.git` directory. If the selected folder is not inside a Git work tree, or is a subfolder inside a larger repository, Surume rejects it and shows a clear error instead of adding it to the recent repository list.
 
 When a repository is successfully opened, it immediately becomes the active repository and is added to the recent repository list.
 
 The recent repository list persists between app launches.
 
-On startup, Gitaluna reopens the last active repository when possible. If that repository no longer exists or is no longer valid, the app shows a small warning, falls back to the no-repository empty state, and leaves the recent list available from the repository picker.
+On startup, Surume reopens the last active repository when possible. If that repository no longer exists or is no longer valid, the app shows a small warning, falls back to the no-repository empty state, and leaves the recent list available from the repository picker.
 
 The first version uses real persistence under the user's platform app-data folder. General app settings and repository history are stored in separate files so preferences and recents can evolve independently.
 
-The first version requires an installed `git` executable. If Git cannot be found, Gitaluna shows a clear error and disables repository-opening actions that require Git.
+The first version requires an installed `git` executable. If Git cannot be found, Surume shows a clear error and disables repository-opening actions that require Git.
 
 Users can:
 
@@ -144,7 +174,7 @@ Users can:
 
 ### Main Window Layout
 
-The first version should closely match GitHub Desktop's layout as the baseline. Gitaluna can diverge later, but v1 should start from a familiar, proven Git client shape.
+The first version should closely match GitHub Desktop's layout as the baseline. Surume can diverge later, but v1 should start from a familiar, proven Git client shape.
 
 The main window uses these regions:
 
@@ -248,7 +278,7 @@ The first version should be a usable local Git client for the core GitHub Deskto
 
 First version includes:
 
-- CMake project.
+- Plain `build.bat` build (no build system).
 - Win32 + Direct3D 11 Dear ImGui app.
 - GitHub Desktop-style fixed resizable panel layout.
 - GitHub Desktop-style app menu row.

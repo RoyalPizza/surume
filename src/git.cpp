@@ -2,8 +2,8 @@
 #define NOMINMAX
 #include <windows.h>
 
-#include "Git.h"
-#include "Log.h"
+#include "git.hpp"
+#include "log.hpp"
 #include <sstream>
 
 static std::string QuoteArg(const std::string& arg) {

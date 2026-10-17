@@ -3,21 +3,21 @@
 #include <windows.h>
 #include <algorithm>
 
-#include "Log.h"
-#include "Platform.h"
-#include "App.h"
-#include "Git.h"
-#include "Ui.h"
+#include "log.hpp"
+#include "platform.hpp"
+#include "app.hpp"
+#include "git.hpp"
+#include "ui.hpp"
 
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     Log::Init();
-    LOG_INFO("=== Gitaluna starting ===");
+    LOG_INFO("=== Surume starting ===");
 
     PlatformContext platform = {};
     AppState        state    = {};
 
     LOG_INFO("Calling Platform::Init (1280x800)");
-    if (!Platform::Init(platform, "Gitaluna", 1280, 800)) {
+    if (!Platform::Init(platform, "Surume", 1280, 800)) {
         LOG_ERROR("Platform::Init failed — aborting");
         Log::Shutdown();
         return 1;
@@ -121,7 +121,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     LOG_INFO("Calling Platform::Shutdown");
     Platform::Shutdown(platform);
 
-    LOG_INFO("=== Gitaluna exiting cleanly ===");
+    LOG_INFO("=== Surume exiting cleanly ===");
     Log::Shutdown();
     return 0;
 }
