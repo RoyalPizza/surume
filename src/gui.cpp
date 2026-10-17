@@ -19,7 +19,7 @@ constexpr float SYNC_BUTTON_EXTRA_WIDTH = 16.0f;
 constexpr float SPLITTER_WIDTH = 4.0f;
 constexpr float MIN_COLUMN_WIDTH = 160.0f;
 constexpr float MAX_COLUMN_WIDTH = 600.0f;
-constexpr float COMMIT_FOOTER_HEIGHT = 148.0f;
+constexpr float COMMIT_FOOTER_HEIGHT = 172.0f;
 constexpr float COMMIT_FOOTER_PADDING_X = 8.0f;
 constexpr float COMMIT_FOOTER_PADDING_Y = 6.0f;
 constexpr float COMMIT_DESCRIPTION_HEIGHT = 52.0f;
@@ -1119,6 +1119,27 @@ static void commit(AppState& state)
     request(state, RequestKind::COMMIT);
 }
 
+// "Amend last commit" checkbox; ticking it loads the last commit's message to edit.
+static void render_amend_checkbox(AppState& state)
+{
+    ImGui::BeginDisabled(state.repo.commits.empty());
+    if (ImGui::Checkbox("Amend last commit", &state.is_amend) && state.is_amend)
+    {
+        request(state, RequestKind::LOAD_LAST_COMMIT);
+    }
+    ImGui::EndDisabled();
+    if (state.is_amend && state.is_last_commit_pushed)
+    {
+        ImGui::SameLine();
+        ImGui::TextColored(COLOR_CONFLICTED, "already pushed");
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("This commit is on a remote branch. Amending rewrites published "
+                "history; others who pulled it will have to reconcile.");
+        }
+    }
+}
+
 static void render_commit_footer(AppState& state, float width)
 {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
@@ -1139,15 +1160,26 @@ static void render_commit_footer(AppState& state, float width)
         ImVec2(input_width, scaled(COMMIT_DESCRIPTION_HEIGHT)));
     ImGui::Spacing();
 
+    render_amend_checkbox(state);
+
+    // Amending may change only the message, so it doesn't need ticked files
     int ticked = count_ticked(state);
-    bool can_commit = has_repo && ticked > 0 && state.commit_summary[0] != '\0' &&
-        !state.is_mutation_running;
+    bool can_commit = has_repo && (ticked > 0 || state.is_amend) &&
+        state.commit_summary[0] != '\0' && !state.is_mutation_running;
     ImGui::BeginDisabled(!can_commit);
     char label[COMMIT_LABEL_SIZE];
     const std::string& current = state.repo.head.name;
     const char* branch = current.empty() ? "branch" : current.c_str();
-    snprintf(label, sizeof(label), "Commit %d file%s to %s", ticked, ticked == 1 ? "" : "s",
-        branch);
+    if (state.is_amend)
+    {
+        snprintf(label, sizeof(label), "Amend last commit (%d file%s)", ticked,
+            ticked == 1 ? "" : "s");
+    }
+    else
+    {
+        snprintf(label, sizeof(label), "Commit %d file%s to %s", ticked,
+            ticked == 1 ? "" : "s", branch);
+    }
     if (ImGui::Button(label, ImVec2(input_width, 0)))
     {
         commit(state);

@@ -497,7 +497,8 @@ static void delete_file(const std::string& path)
 }
 
 bool git_commit_paths(const std::string& repo_path, const std::vector<std::string>& paths,
-    const std::string& summary, const std::string& description, GitResult& result)
+    const std::string& summary, const std::string& description, bool is_amend,
+    GitResult& result)
 {
     // Index back to HEAD, or empty for a repository with no commits yet
     if (git_run(repo_path, { "rev-parse", "--verify", "-q", "HEAD" }, result))
@@ -530,7 +531,31 @@ bool git_commit_paths(const std::string& repo_path, const std::vector<std::strin
         }
     }
 
-    return git_commit(repo_path, summary, description, result);
+    if (!is_amend)
+    {
+        return git_commit(repo_path, summary, description, result);
+    }
+    std::vector<std::string> args = { "commit", "--amend", "-m", summary };
+    if (!description.empty())
+    {
+        args.push_back("-m");
+        args.push_back(description);
+    }
+    return git_run(repo_path, args, result);
+}
+
+bool git_get_last_commit(const std::string& repo_path, std::string& message, bool& is_pushed)
+{
+    GitResult result;
+    if (!git_run(repo_path, { "log", "-1", "--format=%B" }, result))
+    {
+        return false;
+    }
+    message = trim_end(result.output);
+
+    is_pushed = git_run(repo_path, { "branch", "-r", "--contains", "HEAD" }, result) &&
+        !trim_end(result.output).empty();
+    return true;
 }
 
 // Run "git <command...> --pathspec-from-file=<temp> --pathspec-file-nul" for paths.

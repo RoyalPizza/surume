@@ -64,7 +64,7 @@ Nothing queued. Pick from the v1 features and bugs below.
 - [ ] F15 **Partial commits.** Line and hunk checkboxes in the diff gutter; the file checkbox shows a mixed state. Commit builds a patch from the selected lines and applies it with `git apply --cached`.
 - [x] F16 **Discard changes.** Context menu on a file or selection, and "Discard all changes..." in the Repository menu. Confirms first; untracked files are deleted.
 - [ ] F17 **Stash.** "Stash all changes" (including untracked) in the Branch menu; a "Stashed changes" row in the Changes list with Restore and Discard; offer to stash when switching branches with changes.
-- [ ] F18 **Amend last commit.** Checkbox in the commit footer that loads the last message and commits with `--amend`; warns when the commit is already pushed.
+- [x] F18 **Amend last commit.** Checkbox in the commit footer that loads the last message and commits with `--amend`; warns when the commit is already pushed.
 
 ## Features: later
 

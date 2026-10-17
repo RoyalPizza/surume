@@ -123,6 +123,7 @@ enum class RequestKind
     LOAD_DIFF,        // text: file path
     LOAD_COMMIT,      // uses selected_commit_hash
     LOAD_COMMIT_DIFF, // uses selected_commit_hash and selected_commit_file
+    LOAD_LAST_COMMIT, // fills the commit text from the last commit, for amending
     COMMIT,           // uses the ticked files and commit text in AppState
     CHECKOUT_BRANCH,  // text: branch name, flag: is a remote branch
     CREATE_BRANCH,    // text: branch name
@@ -155,6 +156,8 @@ struct AppState
     std::unordered_map<std::string, bool> unticked_paths; // files left out; new files start ticked
     char commit_summary[COMMIT_SUMMARY_SIZE] = {};
     char commit_description[COMMIT_DESCRIPTION_SIZE] = {};
+    bool is_amend = false;               // the next commit replaces the last one
+    bool is_last_commit_pushed = false;  // amending it would rewrite published history
 
     // View
     NavMode nav_mode = NavMode::CHANGES;

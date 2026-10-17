@@ -14,7 +14,8 @@ enum class JobKind
     LOAD_DIFF,       // file: the file to diff
     LOAD_COMMIT,     // text: commit hash
     LOAD_COMMIT_DIFF, // text: commit hash, file: the file in that commit
-    COMMIT,          // paths: files to commit, text: summary, text2: description
+    COMMIT,          // paths: files, text: summary, text2: description, flag: amend
+    LOAD_LAST_COMMIT, // read the last commit's message and whether it's pushed
     CHECKOUT_BRANCH, // text: branch name, flag: is a remote branch
     CREATE_BRANCH,   // text: branch name
     DELETE_BRANCH,   // text: branch name
@@ -47,6 +48,8 @@ struct JobResult
     std::string diff_path; // file the diff belongs to
     std::string commit_hash; // for LOAD_COMMIT and LOAD_COMMIT_DIFF
     CommitDetails commit_details;
+    std::string message;     // for LOAD_LAST_COMMIT
+    bool is_pushed = false;  // for LOAD_LAST_COMMIT
     std::string git_executable; // for FIND_GIT
 };
 

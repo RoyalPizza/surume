@@ -314,7 +314,8 @@ static void test_commit_paths(const std::string& root)
     // First commit in a repository with no HEAD yet, with only one of two new files
     write_file(repo + "\\a.txt", "a\n");
     write_file(repo + "\\b.txt", "b\n");
-    check(git_commit_paths(repo, { "a.txt" }, "first", "", result), "first commit with no HEAD");
+    check(git_commit_paths(repo, { "a.txt" }, "first", "", false, result),
+        "first commit with no HEAD");
     std::vector<FileStatus> files;
     git_get_status(repo, files);
     check(files.size() == 1 && files[0].path == "b.txt" && files[0].index_status == '?',
@@ -333,7 +334,8 @@ static void test_commit_paths(const std::string& root)
     run(repo, { "mv", "c.txt", "d.txt" });
 
     // Tick the deletion and the rename (both sides) but not a.txt
-    check(git_commit_paths(repo, { "b.txt", "d.txt", "c.txt" }, "delete and rename", "", result),
+    check(git_commit_paths(repo, { "b.txt", "d.txt", "c.txt" }, "delete and rename", "", false,
+        result),
         "commit a deletion and a rename");
     git_get_status(repo, files);
     const FileStatus* modified = find_file(files, "a.txt");
@@ -346,7 +348,7 @@ static void test_commit_paths(const std::string& root)
         "commit has the deletion and the rename");
 
     // Nothing ticked: the commit fails with git's reason on stdout
-    check(!git_commit_paths(repo, {}, "empty", "", result) &&
+    check(!git_commit_paths(repo, {}, "empty", "", false, result) &&
         git_error_text(result).find("no changes added") != std::string::npos,
         "empty selection fails with git's reason (from stdout)");
 }
@@ -475,6 +477,40 @@ static void test_discard(const std::string& root)
         "discard in a repository with no commits");
 }
 
+static void test_amend(const std::string& root)
+{
+    std::string repo = create_repo(root, "amend");
+    commit_file(repo, "1\n", "Frist");
+
+    std::string message;
+    bool is_pushed = true;
+    check(git_get_last_commit(repo, message, is_pushed) && message == "Frist" && !is_pushed,
+        "last commit message read, not pushed");
+
+    // Reword and add a file in the same amend
+    write_file(repo + "\\extra.txt", "extra\n");
+    GitResult result;
+    check(git_commit_paths(repo, { "extra.txt" }, "First", "Now spelled right.", true, result),
+        "amend with a file and a new message");
+    std::vector<CommitInfo> commits;
+    git_get_log(repo, commits);
+    git_run(repo, { "show", "--name-only", "--format=", "HEAD" }, result);
+    check(commits.size() == 1 && commits[0].subject == "First" &&
+        result.output.find("extra.txt") != std::string::npos,
+        "amend replaced the commit instead of adding one");
+
+    check(git_commit_paths(repo, {}, "First again", "", true, result),
+        "amend with no files just rewords");
+
+    std::string remote = root + "\\amend remote.git";
+    make_directory(remote);
+    run(remote, { "init", "-q", "--bare", "-b", "main" });
+    run(repo, { "remote", "add", "origin", remote });
+    run(repo, { "push", "-q", "-u", "origin", "main" });
+    check(git_get_last_commit(repo, message, is_pushed) && is_pushed,
+        "pushed commit is reported as pushed");
+}
+
 static void test_persistence(const std::string& root)
 {
     std::string dir = root + "\\app data \xC3\xBC\\"; // "ü"
@@ -532,6 +568,7 @@ int main()
     test_diff(root);
     test_commit_details(root);
     test_discard(root);
+    test_amend(root);
     test_persistence(root);
 
     delete_tree(root);

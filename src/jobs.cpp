@@ -37,6 +37,7 @@ static bool is_mutation(JobKind kind)
         case JobKind::LOAD_DIFF:
         case JobKind::LOAD_COMMIT:
         case JobKind::LOAD_COMMIT_DIFF:
+        case JobKind::LOAD_LAST_COMMIT:
             return false;
     }
     return false;
@@ -56,6 +57,7 @@ static const char* job_label(JobKind kind)
         case JobKind::LOAD_COMMIT_DIFF:
             return "Loading diff";
         case JobKind::LOAD_COMMIT:
+        case JobKind::LOAD_LAST_COMMIT:
             return "Loading commit";
         case JobKind::COMMIT:
             return "Committing";
@@ -149,10 +151,15 @@ static void run_job(const Job& job, JobResult& result)
                 result.diff);
             break;
 
+        case JobKind::LOAD_LAST_COMMIT:
+            result.is_success = git_get_last_commit(job.repo_path, result.message,
+                result.is_pushed);
+            break;
+
         case JobKind::COMMIT:
         {
             bool is_success = git_commit_paths(job.repo_path, job.paths, job.text, job.text2,
-                git_result);
+                job.flag, git_result);
             finish_mutation(job, is_success, git_result, result);
             break;
         }

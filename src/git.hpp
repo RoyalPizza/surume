@@ -53,8 +53,14 @@ bool git_commit(const std::string& repo_path, const std::string& summary,
 // Make the index hold exactly the working-tree state of paths (everything else as in HEAD),
 // then commit. Staging done outside Surume is replaced. Paths are literal, not globs; include
 // both sides of a rename. Returns false on failure; result holds the failing command's output.
+// With is_amend, the last commit is replaced instead (paths may then be empty to reword it).
 bool git_commit_paths(const std::string& repo_path, const std::vector<std::string>& paths,
-    const std::string& summary, const std::string& description, GitResult& result);
+    const std::string& summary, const std::string& description, bool is_amend,
+    GitResult& result);
+
+// Read the last commit's full message, and whether that commit is already on a remote-tracking
+// branch (amending it would rewrite published history). Returns false if there is no commit.
+bool git_get_last_commit(const std::string& repo_path, std::string& message, bool& is_pushed);
 
 // Throw away the changes to files: tracked files go back to HEAD (index and working tree,
 // both sides of a rename), untracked files are deleted. Returns false on failure.

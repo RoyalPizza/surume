@@ -18,6 +18,7 @@
 #include <shobjidl.h>
 
 #include <algorithm>
+#include <cstring>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -676,6 +677,26 @@ static void clear_commit_text(AppState& state)
     state.commit_description[0] = '\0';
 }
 
+// Split a commit message into the summary (first line) and description (after the blank
+// line that follows it).
+static void set_commit_text(AppState& state, const std::string& message)
+{
+    size_t line_end = message.find('\n');
+    std::string summary = message.substr(0, line_end);
+    std::string description;
+    if (line_end != std::string::npos)
+    {
+        size_t body = message.find_first_not_of('\n', line_end);
+        if (body != std::string::npos)
+        {
+            description = message.substr(body);
+        }
+    }
+    strncpy_s(state.commit_summary, summary.c_str(), sizeof(state.commit_summary) - 1);
+    strncpy_s(state.commit_description, description.c_str(),
+        sizeof(state.commit_description) - 1);
+}
+
 static void apply_snapshot(AppState& state, const RepoSnapshot& snapshot)
 {
     state.repo = snapshot;
@@ -712,6 +733,8 @@ static void apply_open_repo(AppState& state, const JobResult& result)
     clear_diff(state.diff);
     state.status_message.clear();
     state.unticked_paths.clear();
+    state.is_amend = false;
+    state.is_last_commit_pushed = false;
     clear_history_selection(state);
     clear_commit_text(state);
     state.repo = result.snapshot;
@@ -740,6 +763,7 @@ static const char* failure_prefix(JobKind kind)
         case JobKind::LOAD_DIFF:
         case JobKind::LOAD_COMMIT:
         case JobKind::LOAD_COMMIT_DIFF:
+        case JobKind::LOAD_LAST_COMMIT:
             return "";
     }
     return "";
@@ -779,6 +803,7 @@ static void apply_result(AppState& state, const JobResult& result)
         case JobKind::LOAD_DIFF:
         case JobKind::LOAD_COMMIT:
         case JobKind::LOAD_COMMIT_DIFF:
+        case JobKind::LOAD_LAST_COMMIT:
         case JobKind::COMMIT:
         case JobKind::CHECKOUT_BRANCH:
         case JobKind::CREATE_BRANCH:
@@ -807,6 +832,15 @@ static void apply_result(AppState& state, const JobResult& result)
         if (result.commit_hash == state.selected_commit_hash)
         {
             state.commit_details = result.is_success ? result.commit_details : CommitDetails{};
+        }
+        return;
+    }
+    if (result.kind == JobKind::LOAD_LAST_COMMIT)
+    {
+        if (result.is_success && state.is_amend)
+        {
+            set_commit_text(state, result.message);
+            state.is_last_commit_pushed = result.is_pushed;
         }
         return;
     }
@@ -839,6 +873,8 @@ static void apply_result(AppState& state, const JobResult& result)
         if (result.kind == JobKind::COMMIT)
         {
             clear_commit_text(state);
+            state.is_amend = false;
+            state.is_last_commit_pushed = false;
         }
     }
     else
@@ -931,6 +967,7 @@ static void queue_commit(const AppState& state)
     Job job = make_job(state, JobKind::COMMIT);
     job.text = state.commit_summary;
     job.text2 = state.commit_description;
+    job.flag = state.is_amend;
     for (const FileStatus& file : state.repo.files)
     {
         if (state.unticked_paths.count(file.path) != 0)
@@ -988,6 +1025,10 @@ static void handle_request(AppState& state, const Request& request, Window& wind
 
         case RequestKind::LOAD_COMMIT_DIFF:
             queue_commit_diff(state);
+            break;
+
+        case RequestKind::LOAD_LAST_COMMIT:
+            queue_repo_job(state, request, JobKind::LOAD_LAST_COMMIT);
             break;
 
         case RequestKind::COMMIT:
