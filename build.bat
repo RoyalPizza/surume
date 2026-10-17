@@ -48,7 +48,7 @@ cl %COMMON% /W0 /D_CRT_SECURE_NO_WARNINGS %TOML%\tomlc17.c
 if errorlevel 1 exit /b 1
 
 rem App code
-cl %COMMON% /std:c++20 /W3 /WX src\*.cpp
+cl %COMMON% /std:c++20 /W4 /WX src\*.cpp
 if errorlevel 1 exit /b 1
 
 link /nologo %LINKCFG% /SUBSYSTEM:WINDOWS /OUT:%BIN%\surume.exe ^

@@ -1,479 +1,579 @@
+#include "git.hpp"
+#include "gui.hpp"
+#include "log.hpp"
+#include "model.hpp"
+#include "persistence.hpp"
+#include "imgui.h"
+#include "imgui_impl_dx11.h"
+#include "imgui_impl_win32.h"
+
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
 #include <d3d11.h>
 #include <dxgi.h>
-#include <shobjidl.h>
-#include <shlobj.h>
 #include <shellapi.h>
+#include <shlobj.h>
+#include <shobjidl.h>
+
 #include <algorithm>
+#include <cstdint>
+#include <string>
+#include <vector>
 
-#include "log.hpp"
-#include "git.hpp"
-#include "gui.hpp"
-#include "persistence.hpp"
-#include "imgui.h"
-#include "imgui_impl_win32.h"
-#include "imgui_impl_dx11.h"
+// Deliberately not declared in imgui_impl_win32.h, to keep <windows.h> out of that header
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT msg,
+    WPARAM wparam, LPARAM lparam);
 
-// Must be forward-declared manually — intentionally excluded from imgui_impl_win32.h to avoid pulling in <windows.h>
-extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+constexpr int INITIAL_WIDTH = 1280;
+constexpr int INITIAL_HEIGHT = 800;
+constexpr UINT SWAP_CHAIN_BUFFER_COUNT = 2;
+constexpr UINT REFRESH_RATE = 60;
+constexpr float CLEAR_COLOR[4] = { 0.11f, 0.11f, 0.11f, 1.0f };
+constexpr int HEARTBEAT_FRAMES = 600;
+constexpr INT_PTR SHELL_EXECUTE_SUCCESS_MIN = 32; // ShellExecute returns > 32 on success
+constexpr const wchar_t* WINDOW_CLASS_NAME = L"SurumeWnd";
+constexpr int TERMINAL_ARGS_SIZE = MAX_PATH * 2;
 
-struct Window {
-    HWND                    hwnd                 = nullptr;
-    ID3D11Device*           device               = nullptr;
-    ID3D11DeviceContext*    deviceContext        = nullptr;
-    IDXGISwapChain*         swapChain            = nullptr;
-    ID3D11RenderTargetView* mainRenderTargetView = nullptr;
-    int                     width                = 1280;
-    int                     height               = 800;
-    bool                    wantsQuit            = false;
-    bool                    pendingResize        = false;
-    int                     pendingWidth         = 0;
-    int                     pendingHeight        = 0;
+struct Window
+{
+    HWND hwnd = nullptr;
+    ID3D11Device* device = nullptr;
+    ID3D11DeviceContext* device_context = nullptr;
+    IDXGISwapChain* swap_chain = nullptr;
+    ID3D11RenderTargetView* render_target_view = nullptr;
+    int width = INITIAL_WIDTH;
+    int height = INITIAL_HEIGHT;
+    bool is_quit_requested = false;
+    bool has_pending_resize = false;
+    int pending_width = 0;
+    int pending_height = 0;
 };
 
-// Single window; WndProc needs to reach it
-static Window g_window;
+// Single window; window_proc needs to reach it
+static Window main_window;
 
 // -------------------------------------------------------------------------
 // Window and D3D11
 // -------------------------------------------------------------------------
 
-static LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
+static LRESULT WINAPI window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
+{
+    if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wparam, lparam))
+    {
         return true;
-
-    switch (msg) {
-    case WM_SIZE:
-        if (wParam != SIZE_MINIMIZED) {
-            LOG_DEBUG("WM_SIZE: %dx%d", (int)LOWORD(lParam), (int)HIWORD(lParam));
-            g_window.pendingResize = true;
-            g_window.pendingWidth  = LOWORD(lParam);
-            g_window.pendingHeight = HIWORD(lParam);
-        } else {
-            LOG_DEBUG("WM_SIZE: minimized");
-        }
-        return 0;
-    case WM_SYSCOMMAND:
-        if ((wParam & 0xfff0) == SC_KEYMENU)
-            return 0;
-        break;
-    case WM_DESTROY:
-        LOG_INFO("WM_DESTROY received");
-        ::PostQuitMessage(0);
-        return 0;
     }
-    return ::DefWindowProcW(hWnd, msg, wParam, lParam);
+
+    switch (msg)
+    {
+        case WM_SIZE:
+            if (wparam != SIZE_MINIMIZED)
+            {
+                main_window.has_pending_resize = true;
+                main_window.pending_width = LOWORD(lparam);
+                main_window.pending_height = HIWORD(lparam);
+            }
+            return 0;
+
+        case WM_SYSCOMMAND:
+            // Keep Alt from opening the (nonexistent) system menu bar
+            if ((wparam & 0xfff0) == SC_KEYMENU)
+            {
+                return 0;
+            }
+            break;
+
+        case WM_DESTROY:
+            LOG_INFO("WM_DESTROY received");
+            PostQuitMessage(0);
+            return 0;
+    }
+
+    return DefWindowProcW(hwnd, msg, wparam, lparam);
 }
 
-static bool CreateD3DDevice(Window& win) {
-    LOG_INFO("Creating D3D11 device and swap chain");
-
-    DXGI_SWAP_CHAIN_DESC sd       = {};
-    sd.BufferCount                = 2;
-    sd.BufferDesc.Format          = DXGI_FORMAT_R8G8B8A8_UNORM;
-    sd.BufferDesc.RefreshRate     = { 60, 1 };
-    sd.Flags                      = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
-    sd.BufferUsage                = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    sd.OutputWindow               = win.hwnd;
-    sd.SampleDesc                 = { 1, 0 };
-    sd.Windowed                   = TRUE;
-    sd.SwapEffect                 = DXGI_SWAP_EFFECT_DISCARD;
+static bool create_device(Window& window)
+{
+    DXGI_SWAP_CHAIN_DESC description = {};
+    description.BufferCount = SWAP_CHAIN_BUFFER_COUNT;
+    description.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    description.BufferDesc.RefreshRate = { REFRESH_RATE, 1 };
+    description.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
+    description.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+    description.OutputWindow = window.hwnd;
+    description.SampleDesc = { 1, 0 };
+    description.Windowed = TRUE;
+    description.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
 
     UINT flags = 0;
 #ifdef SURUME_DEBUG
     flags |= D3D11_CREATE_DEVICE_DEBUG;
-    LOG_DEBUG("D3D11_CREATE_DEVICE_DEBUG flag set");
 #endif
 
-    D3D_FEATURE_LEVEL featureLevel;
+    D3D_FEATURE_LEVEL feature_level;
     const D3D_FEATURE_LEVEL levels[] = { D3D_FEATURE_LEVEL_11_0 };
-    HRESULT hr = D3D11CreateDeviceAndSwapChain(
-        nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
-        flags, levels, 1, D3D11_SDK_VERSION,
-        &sd, &win.swapChain, &win.device, &featureLevel, &win.deviceContext);
-
-    if (FAILED(hr)) {
+    HRESULT hr = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
+        flags, levels, 1, D3D11_SDK_VERSION, &description, &window.swap_chain,
+        &window.device, &feature_level, &window.device_context);
+    if (FAILED(hr))
+    {
         LOG_ERROR("D3D11CreateDeviceAndSwapChain failed: HRESULT 0x%08X", (unsigned)hr);
         return false;
     }
 
-    LOG_INFO("D3D11 device created — feature level 0x%04X", (unsigned)featureLevel);
+    LOG_INFO("D3D11 device created, feature level 0x%04X", (unsigned)feature_level);
     return true;
 }
 
-static bool CreateRenderTarget(Window& win) {
-    LOG_DEBUG("Creating render target view");
-    ID3D11Texture2D* backBuffer = nullptr;
-    HRESULT hr = win.swapChain->GetBuffer(0, IID_PPV_ARGS(&backBuffer));
-    if (FAILED(hr) || !backBuffer) {
+static bool create_render_target(Window& window)
+{
+    ID3D11Texture2D* back_buffer = nullptr;
+    HRESULT hr = window.swap_chain->GetBuffer(0, IID_PPV_ARGS(&back_buffer));
+    if (FAILED(hr) || back_buffer == nullptr)
+    {
         LOG_ERROR("GetBuffer failed: HRESULT 0x%08X", (unsigned)hr);
         return false;
     }
 
-    hr = win.device->CreateRenderTargetView(backBuffer, nullptr, &win.mainRenderTargetView);
-    backBuffer->Release();
-
-    if (FAILED(hr) || !win.mainRenderTargetView) {
+    hr = window.device->CreateRenderTargetView(back_buffer, nullptr, &window.render_target_view);
+    back_buffer->Release();
+    if (FAILED(hr) || window.render_target_view == nullptr)
+    {
         LOG_ERROR("CreateRenderTargetView failed: HRESULT 0x%08X", (unsigned)hr);
         return false;
     }
-
-    LOG_DEBUG("Render target view created");
     return true;
 }
 
-static void DestroyRenderTarget(Window& win) {
-    if (win.mainRenderTargetView) {
-        LOG_DEBUG("Destroying render target view");
-        win.mainRenderTargetView->Release();
-        win.mainRenderTargetView = nullptr;
+static void destroy_render_target(Window& window)
+{
+    if (window.render_target_view != nullptr)
+    {
+        window.render_target_view->Release();
+        window.render_target_view = nullptr;
     }
 }
 
-static bool InitWindow(Window& win, const wchar_t* title, int width, int height) {
-    LOG_INFO("InitWindow begin — size=%dx%d", width, height);
-
+static bool window_init(Window& window, const wchar_t* title)
+{
     HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    LOG_DEBUG("CoInitializeEx result: 0x%08X", (unsigned)hr);
-
-    WNDCLASSEXW wc  = {};
-    wc.cbSize       = sizeof(wc);
-    wc.style        = CS_CLASSDC;
-    wc.lpfnWndProc  = WndProc;
-    wc.hInstance    = GetModuleHandleW(nullptr);
-    wc.hCursor      = LoadCursorW(nullptr, IDC_ARROW);
-    wc.lpszClassName = L"SurumeWnd";
-
-    if (!RegisterClassExW(&wc)) {
-        LOG_ERROR("RegisterClassExW failed: GetLastError=%u", (unsigned)GetLastError());
+    if (FAILED(hr))
+    {
+        LOG_ERROR("CoInitializeEx failed: HRESULT 0x%08X", (unsigned)hr);
         return false;
     }
-    LOG_DEBUG("Window class registered");
 
-    win.hwnd = CreateWindowExW(
-        0, L"SurumeWnd", title,
-        WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, CW_USEDEFAULT, width, height,
-        nullptr, nullptr, wc.hInstance, nullptr);
-
-    if (!win.hwnd) {
-        LOG_ERROR("CreateWindowExW failed: GetLastError=%u", (unsigned)GetLastError());
+    WNDCLASSEXW window_class = {};
+    window_class.cbSize = sizeof(window_class);
+    window_class.style = CS_CLASSDC;
+    window_class.lpfnWndProc = window_proc;
+    window_class.hInstance = GetModuleHandleW(nullptr);
+    window_class.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    window_class.lpszClassName = WINDOW_CLASS_NAME;
+    if (!RegisterClassExW(&window_class))
+    {
+        LOG_ERROR("RegisterClassExW failed: %u", (unsigned)GetLastError());
         return false;
     }
-    LOG_INFO("Win32 window created — HWND=0x%p", (void*)win.hwnd);
-    win.width  = width;
-    win.height = height;
 
-    if (!CreateD3DDevice(win)) return false;
-    if (!CreateRenderTarget(win)) return false;
+    window.hwnd = CreateWindowExW(0, WINDOW_CLASS_NAME, title, WS_OVERLAPPEDWINDOW,
+        CW_USEDEFAULT, CW_USEDEFAULT, window.width, window.height,
+        nullptr, nullptr, window_class.hInstance, nullptr);
+    if (window.hwnd == nullptr)
+    {
+        LOG_ERROR("CreateWindowExW failed: %u", (unsigned)GetLastError());
+        return false;
+    }
 
-    ShowWindow(win.hwnd, SW_SHOWDEFAULT);
-    UpdateWindow(win.hwnd);
-    LOG_INFO("Window shown");
+    if (!create_device(window) || !create_render_target(window))
+    {
+        return false;
+    }
+
+    ShowWindow(window.hwnd, SW_SHOWDEFAULT);
+    UpdateWindow(window.hwnd);
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
-    LOG_INFO("ImGui context created — version %s", ImGui::GetVersion());
-
     ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     ImGui::StyleColorsDark();
+    if (!ImGui_ImplWin32_Init(window.hwnd) ||
+        !ImGui_ImplDX11_Init(window.device, window.device_context))
+    {
+        LOG_ERROR("ImGui backend init failed");
+        return false;
+    }
 
-    ImGui_ImplWin32_Init(win.hwnd);
-    ImGui_ImplDX11_Init(win.device, win.deviceContext);
-    LOG_INFO("InitWindow complete");
+    LOG_INFO("window_init complete, ImGui %s", ImGui::GetVersion());
     return true;
 }
 
-static void PumpMessages(Window& win) {
+static void pump_messages(Window& window)
+{
     MSG msg;
-    while (::PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
-        ::TranslateMessage(&msg);
-        ::DispatchMessageW(&msg);
-        if (msg.message == WM_QUIT) {
-            LOG_INFO("PumpMessages: WM_QUIT — setting wantsQuit");
-            win.wantsQuit = true;
+    while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
+    {
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+        if (msg.message == WM_QUIT)
+        {
+            window.is_quit_requested = true;
         }
     }
 }
 
-static void HandleResize(Window& win) {
-    if (!win.pendingResize) return;
-    LOG_INFO("HandleResize: %dx%d -> %dx%d",
-        win.width, win.height, win.pendingWidth, win.pendingHeight);
-    win.pendingResize = false;
-    win.width         = win.pendingWidth;
-    win.height        = win.pendingHeight;
+static void handle_resize(Window& window)
+{
+    if (!window.has_pending_resize)
+    {
+        return;
+    }
 
-    DestroyRenderTarget(win);
-    HRESULT hr = win.swapChain->ResizeBuffers(
-        0, (UINT)win.pendingWidth, (UINT)win.pendingHeight, DXGI_FORMAT_UNKNOWN, 0);
-    if (FAILED(hr)) {
+    LOG_INFO("handle_resize: %dx%d -> %dx%d",
+        window.width, window.height, window.pending_width, window.pending_height);
+    window.has_pending_resize = false;
+    window.width = window.pending_width;
+    window.height = window.pending_height;
+
+    destroy_render_target(window);
+    HRESULT hr = window.swap_chain->ResizeBuffers(0, (UINT)window.width, (UINT)window.height,
+        DXGI_FORMAT_UNKNOWN, 0);
+    if (FAILED(hr))
+    {
         LOG_ERROR("ResizeBuffers failed: HRESULT 0x%08X", (unsigned)hr);
     }
-    CreateRenderTarget(win);
+    create_render_target(window);
 }
 
-static void NewFrame() {
+static void begin_frame()
+{
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
 }
 
-static void Present(Window& win) {
+static void present(Window& window)
+{
     ImGui::Render();
 
-    const float clearColor[] = { 0.11f, 0.11f, 0.11f, 1.0f };
-    win.deviceContext->OMSetRenderTargets(1, &win.mainRenderTargetView, nullptr);
-    win.deviceContext->ClearRenderTargetView(win.mainRenderTargetView, clearColor);
-
+    window.device_context->OMSetRenderTargets(1, &window.render_target_view, nullptr);
+    window.device_context->ClearRenderTargetView(window.render_target_view, CLEAR_COLOR);
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-    HRESULT hr = win.swapChain->Present(1, 0);
-    if (FAILED(hr)) {
+
+    HRESULT hr = window.swap_chain->Present(1, 0);
+    if (FAILED(hr))
+    {
         LOG_ERROR("Present failed: HRESULT 0x%08X", (unsigned)hr);
     }
 }
 
-static void ShutdownWindow(Window& win) {
-    LOG_INFO("ShutdownWindow begin");
-
+static void window_shutdown(Window& window)
+{
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();
 
-    DestroyRenderTarget(win);
-    if (win.swapChain)     { win.swapChain->Release();     win.swapChain     = nullptr; }
-    if (win.deviceContext) { win.deviceContext->Release(); win.deviceContext = nullptr; }
-    if (win.device)        { win.device->Release();        win.device        = nullptr; }
-
-    if (win.hwnd) {
-        DestroyWindow(win.hwnd);
-        UnregisterClassW(L"SurumeWnd", GetModuleHandleW(nullptr));
-        win.hwnd = nullptr;
+    destroy_render_target(window);
+    if (window.swap_chain != nullptr)
+    {
+        window.swap_chain->Release();
+        window.swap_chain = nullptr;
+    }
+    if (window.device_context != nullptr)
+    {
+        window.device_context->Release();
+        window.device_context = nullptr;
+    }
+    if (window.device != nullptr)
+    {
+        window.device->Release();
+        window.device = nullptr;
     }
 
+    if (window.hwnd != nullptr)
+    {
+        DestroyWindow(window.hwnd);
+        window.hwnd = nullptr;
+    }
+    UnregisterClassW(WINDOW_CLASS_NAME, GetModuleHandleW(nullptr));
     CoUninitialize();
-    LOG_INFO("ShutdownWindow complete");
 }
 
 // -------------------------------------------------------------------------
 // Shell
 // -------------------------------------------------------------------------
 
-// Returns the chosen folder as UTF-8, or empty if cancelled or failed.
-static std::string OpenFolderDialog(HWND parent, const wchar_t* title) {
-    LOG_INFO("OpenFolderDialog");
-    std::string result;
+static std::string to_utf8(const wchar_t* text)
+{
+    int len = WideCharToMultiByte(CP_UTF8, 0, text, -1, nullptr, 0, nullptr, nullptr);
+    if (len <= 1)
+    {
+        return "";
+    }
 
-    IFileDialog* pfd = nullptr;
-    HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pfd));
-    if (FAILED(hr)) {
+    std::string utf8(len, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, text, -1, utf8.data(), len, nullptr, nullptr);
+    utf8.pop_back(); // terminator written by WideCharToMultiByte
+    return utf8;
+}
+
+// Convert UTF-8 to a null-terminated UTF-16 buffer for Win32 W functions.
+static std::vector<wchar_t> to_wide(const std::string& text)
+{
+    int len = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, nullptr, 0);
+    if (len <= 0)
+    {
+        return std::vector<wchar_t>(1, L'\0');
+    }
+
+    std::vector<wchar_t> wide(len, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, wide.data(), len);
+    return wide;
+}
+
+// Show the folder picker. Returns false if cancelled or failed; folder is UTF-8.
+static bool pick_folder(HWND parent, const wchar_t* title, std::string& folder)
+{
+    IFileDialog* dialog = nullptr;
+    HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
+        IID_PPV_ARGS(&dialog));
+    if (FAILED(hr))
+    {
         LOG_ERROR("CoCreateInstance(IFileDialog) failed: HRESULT 0x%08X", (unsigned)hr);
-        return result;
+        return false;
     }
 
     DWORD options = 0;
-    pfd->GetOptions(&options);
-    pfd->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
-    pfd->SetTitle(title);
+    if (SUCCEEDED(dialog->GetOptions(&options)))
+    {
+        dialog->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
+    }
+    dialog->SetTitle(title);
 
-    hr = pfd->Show(parent);
-    if (SUCCEEDED(hr)) {
-        IShellItem* psi = nullptr;
-        if (SUCCEEDED(pfd->GetResult(&psi))) {
+    bool is_picked = false;
+    hr = dialog->Show(parent);
+    if (SUCCEEDED(hr))
+    {
+        IShellItem* item = nullptr;
+        if (SUCCEEDED(dialog->GetResult(&item)))
+        {
             PWSTR path = nullptr;
-            if (SUCCEEDED(psi->GetDisplayName(SIGDN_FILESYSPATH, &path))) {
-                char narrow[MAX_PATH * 3] = {};
-                WideCharToMultiByte(CP_UTF8, 0, path, -1, narrow, sizeof(narrow), nullptr, nullptr);
-                result = narrow;
+            if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path)))
+            {
+                folder = to_utf8(path);
+                is_picked = true;
                 CoTaskMemFree(path);
-                LOG_INFO("OpenFolderDialog result: '%s'", result.c_str());
-            } else {
-                LOG_WARN("GetDisplayName failed");
             }
-            psi->Release();
-        } else {
-            LOG_WARN("GetResult failed");
+            item->Release();
         }
-    } else if (hr == HRESULT_FROM_WIN32(ERROR_CANCELLED)) {
-        LOG_INFO("OpenFolderDialog: user cancelled");
-    } else {
+    }
+    else if (hr != HRESULT_FROM_WIN32(ERROR_CANCELLED))
+    {
         LOG_ERROR("IFileDialog::Show failed: HRESULT 0x%08X", (unsigned)hr);
     }
 
-    pfd->Release();
-    return result;
+    dialog->Release();
+    return is_picked;
 }
 
-static void OpenInExplorer(const std::string& path) {
-    LOG_INFO("OpenInExplorer path='%s'", path.c_str());
-    wchar_t wpath[MAX_PATH * 2] = {};
-    MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, wpath, MAX_PATH * 2);
-    ShellExecuteW(nullptr, L"explore", wpath, nullptr, nullptr, SW_SHOWDEFAULT);
+static void open_in_explorer(const std::string& path)
+{
+    LOG_INFO("open_in_explorer '%s'", path.c_str());
+    std::vector<wchar_t> wide_path = to_wide(path);
+    ShellExecuteW(nullptr, L"explore", wide_path.data(), nullptr, nullptr, SW_SHOWDEFAULT);
 }
 
-static void OpenInTerminal(HWND parent, const std::string& path) {
-    LOG_INFO("OpenInTerminal path='%s'", path.c_str());
-    wchar_t wpath[MAX_PATH * 2] = {};
-    MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, wpath, MAX_PATH * 2);
+static void open_in_terminal(HWND parent, const std::string& path)
+{
+    LOG_INFO("open_in_terminal '%s'", path.c_str());
+    std::vector<wchar_t> wide_path = to_wide(path);
 
-    // Try Windows Terminal first
-    wchar_t wtArgs[MAX_PATH * 2] = {};
-    swprintf_s(wtArgs, L"-d \"%s\"", wpath);
-    HINSTANCE result = ShellExecuteW(parent, L"open", L"wt.exe", wtArgs, nullptr, SW_SHOWDEFAULT);
-    if ((intptr_t)result > 32) {
-        LOG_DEBUG("Opened Windows Terminal");
+    // Prefer Windows Terminal, fall back to cmd.exe
+    wchar_t terminal_args[TERMINAL_ARGS_SIZE] = {};
+    swprintf_s(terminal_args, L"-d \"%s\"", wide_path.data());
+    HINSTANCE result = ShellExecuteW(parent, L"open", L"wt.exe", terminal_args, nullptr,
+        SW_SHOWDEFAULT);
+    if ((INT_PTR)result > SHELL_EXECUTE_SUCCESS_MIN)
+    {
         return;
     }
 
     LOG_DEBUG("Windows Terminal not found, falling back to cmd.exe");
-    ShellExecuteW(parent, L"open", L"cmd.exe", nullptr, wpath, SW_SHOWDEFAULT);
+    ShellExecuteW(parent, L"open", L"cmd.exe", nullptr, wide_path.data(), SW_SHOWDEFAULT);
 }
 
-// Returns %APPDATA%\Surume\ as UTF-8 (created if missing), or empty on failure.
-static std::string GetAppDataDir() {
+// Returns %APPDATA%\Surume\ as UTF-8, creating it if missing. Empty on failure.
+static std::string get_app_data_dir()
+{
     wchar_t path[MAX_PATH] = {};
     if (FAILED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, path)))
+    {
         return "";
+    }
+
     wcscat_s(path, MAX_PATH, L"\\Surume\\");
     CreateDirectoryW(path, nullptr);
-
-    char narrow[MAX_PATH * 2] = {};
-    WideCharToMultiByte(CP_UTF8, 0, path, -1, narrow, sizeof(narrow), nullptr, nullptr);
-    return narrow;
+    return to_utf8(path);
 }
 
 // -------------------------------------------------------------------------
 // App
 // -------------------------------------------------------------------------
 
-// Make path the active repository if it is a valid repo root. Moves it to the front of the
-// recent list and refreshes repository state. Returns false (state unchanged) if invalid.
-static bool OpenRepo(AppState& state, const std::string& path) {
-    std::string root = Git::GetRepoRoot(path);
-    if (root.empty()) {
-        LOG_WARN("OpenRepo: '%s' is not a valid git repo root", path.c_str());
+// Make path the active repository if it is a repo root: move it to the front of the recent
+// list and load its state. Returns false, leaving state unchanged, if path isn't a repo root.
+static bool open_repo(AppState& state, const std::string& path)
+{
+    std::string root;
+    if (!git_get_repo_root(path, root))
+    {
         return false;
     }
 
-    state.activeRepo = root;
     size_t slash = root.find_last_of("\\/");
-    state.activeRepoName = (slash != std::string::npos) ? root.substr(slash + 1) : root;
-    state.recentRepos.erase(
-        std::remove(state.recentRepos.begin(), state.recentRepos.end(), root),
-        state.recentRepos.end());
-    state.recentRepos.insert(state.recentRepos.begin(), root);
-    state.statusMessage.clear();
-    Git::RefreshRepoState(state);
-    LOG_INFO("OpenRepo: name='%s' branch='%s'",
-        state.activeRepoName.c_str(), state.currentBranch.c_str());
+    state.active_repo = root;
+    state.active_repo_name = slash != std::string::npos ? root.substr(slash + 1) : root;
+    state.recent_repos.erase(
+        std::remove(state.recent_repos.begin(), state.recent_repos.end(), root),
+        state.recent_repos.end());
+    state.recent_repos.insert(state.recent_repos.begin(), root);
+    state.status_message.clear();
+    git_refresh_repo_state(state);
+
+    LOG_INFO("open_repo: name='%s' branch='%s'",
+        state.active_repo_name.c_str(), state.current_branch.c_str());
     return true;
 }
 
-static void InitApp(AppState& state, const std::string& appDataDir) {
-    state.gitExePath = Git::FindGitExecutable();
-    state.gitFound   = !state.gitExePath.empty();
-    if (!state.gitFound)
-        LOG_WARN("Git not found — repository actions will be disabled");
-
-    Persistence::Load(state, appDataDir);
+static void app_init(AppState& state, const std::string& app_data_dir)
+{
+    state.is_git_found = git_find_executable(state.git_executable);
+    persistence_load(state, app_data_dir);
 
     // Restore the last active repo
-    if (state.activeRepo.empty()) return;
-    std::string last = state.activeRepo;
-    state.activeRepo.clear();
-    if (!state.gitFound) {
-        LOG_WARN("InitApp: skipping repo restore — git not found");
+    if (state.active_repo.empty())
+    {
         return;
     }
-    if (!OpenRepo(state, last))
-        state.statusMessage = "Last repository is no longer available.";
+
+    std::string last_repo = state.active_repo;
+    state.active_repo.clear();
+    if (!state.is_git_found)
+    {
+        LOG_WARN("app_init: skipping repo restore, git not found");
+        return;
+    }
+    if (!open_repo(state, last_repo))
+    {
+        state.status_message = "Last repository is no longer available.";
+    }
 }
 
-// Handle requests the UI set during the frame. Runs after Present so blocking work
-// (dialogs, git calls) doesn't stall a half-drawn frame.
-static void HandleRequests(AppState& state, Window& win) {
-    if (state.requestOpenRepo) {
-        state.requestOpenRepo = false;
-        std::string path = OpenFolderDialog(win.hwnd, L"Open Repository");
-        if (!path.empty() && !OpenRepo(state, path))
-            state.statusMessage = "Not a valid Git repository root.";
+static void load_selected_diff(AppState& state)
+{
+    if (state.selected_file_index < 0 ||
+        state.selected_file_index >= (int)state.changed_files.size())
+    {
+        return;
     }
 
-    if (state.requestOpenInExplorer) {
-        state.requestOpenInExplorer = false;
-        OpenInExplorer(state.activeRepo);
+    const FileStatus& file = state.changed_files[state.selected_file_index];
+    if (!git_get_diff(state.active_repo, file, state.current_diff))
+    {
+        state.current_diff.clear();
     }
+}
 
-    if (state.requestOpenInTerminal) {
-        state.requestOpenInTerminal = false;
-        OpenInTerminal(win.hwnd, state.activeRepo);
-    }
-
-    if (state.requestDiff) {
-        state.requestDiff = false;
-        if (state.selectedFileIdx >= 0 && state.selectedFileIdx < (int)state.changedFiles.size()) {
-            const FileStatus& f = state.changedFiles[state.selectedFileIdx];
-            LOG_INFO("Fetching diff for '%s'", f.path.c_str());
-            state.currentDiff = Git::GetDiff(state.activeRepo, f);
-            LOG_INFO("Diff fetched — %d bytes", (int)state.currentDiff.size());
+// Handle requests the GUI left in state. Runs after present so blocking work (dialogs, git
+// calls) doesn't stall a half-drawn frame.
+static void handle_requests(AppState& state, Window& window)
+{
+    if (state.is_open_repo_requested)
+    {
+        state.is_open_repo_requested = false;
+        std::string folder;
+        if (pick_folder(window.hwnd, L"Open Repository", folder) && !open_repo(state, folder))
+        {
+            state.status_message = "Not a valid Git repository root.";
         }
     }
 
-    if (!state.requestSwitchRepoPath.empty()) {
-        std::string path = std::move(state.requestSwitchRepoPath);
-        state.requestSwitchRepoPath.clear();
-        LOG_INFO("Switch repo requested: '%s'", path.c_str());
-        if (!OpenRepo(state, path))
-            state.statusMessage = "Repository no longer available: " + path;
+    if (state.is_open_in_explorer_requested)
+    {
+        state.is_open_in_explorer_requested = false;
+        open_in_explorer(state.active_repo);
+    }
+
+    if (state.is_open_in_terminal_requested)
+    {
+        state.is_open_in_terminal_requested = false;
+        open_in_terminal(window.hwnd, state.active_repo);
+    }
+
+    if (state.is_diff_requested)
+    {
+        state.is_diff_requested = false;
+        load_selected_diff(state);
+    }
+
+    if (!state.switch_repo_path.empty())
+    {
+        std::string path = state.switch_repo_path;
+        state.switch_repo_path.clear();
+        if (!open_repo(state, path))
+        {
+            state.status_message = "Repository no longer available: " + path;
+        }
     }
 }
 
-int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
-    std::string appDataDir = GetAppDataDir();
-    Log::Init(appDataDir);
-    LOG_INFO("=== Surume starting === appData='%s'", appDataDir.c_str());
+int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
+{
+    std::string app_data_dir = get_app_data_dir();
+    log_init(app_data_dir);
+    LOG_INFO("=== Surume starting === app data '%s'", app_data_dir.c_str());
 
-    AppState state = {};
-
-    if (!InitWindow(g_window, L"Surume", 1280, 800)) {
-        LOG_ERROR("InitWindow failed — aborting");
-        Log::Shutdown();
+    if (!window_init(main_window, L"Surume"))
+    {
+        LOG_ERROR("window_init failed, aborting");
+        log_shutdown();
         return 1;
     }
 
-    InitApp(state, appDataDir);
-    LOG_INFO("InitApp complete — gitFound=%d activeRepo='%s'",
-        (int)state.gitFound, state.activeRepo.c_str());
+    AppState state;
+    app_init(state, app_data_dir);
+    LOG_INFO("app_init complete: git=%d repo='%s'", (int)state.is_git_found,
+        state.active_repo.c_str());
 
-    int frameCount = 0;
-    while (!g_window.wantsQuit) {
-        PumpMessages(g_window);
-        if (g_window.wantsQuit) {
-            LOG_INFO("WM_QUIT received — exiting loop");
+    int frame_count = 0;
+    while (true)
+    {
+        pump_messages(main_window);
+        if (main_window.is_quit_requested)
+        {
             break;
         }
 
-        HandleResize(g_window);
-        NewFrame();
-        Gui::Render(state);
-        Present(g_window);
+        handle_resize(main_window);
+        begin_frame();
+        gui_render(state);
+        present(main_window);
+        handle_requests(state, main_window);
 
-        ++frameCount;
-        if (frameCount % 600 == 0)
-            LOG_DEBUG("Heartbeat — frame %d, activeRepo='%s', branch='%s'",
-                frameCount, state.activeRepo.c_str(), state.currentBranch.c_str());
-
-        HandleRequests(state, g_window);
+        ++frame_count;
+        if (frame_count % HEARTBEAT_FRAMES == 0)
+        {
+            LOG_DEBUG("heartbeat: frame %d", frame_count);
+        }
     }
 
-    LOG_INFO("Main loop exited after %d frames", frameCount);
+    if (!persistence_save(state, app_data_dir))
+    {
+        LOG_ERROR("persistence_save failed; settings or recent repos were not saved");
+    }
+    window_shutdown(main_window);
 
-    Persistence::Save(state, appDataDir);
-    ShutdownWindow(g_window);
-
-    LOG_INFO("=== Surume exiting cleanly ===");
-    Log::Shutdown();
+    LOG_INFO("=== Surume exiting cleanly after %d frames ===", frame_count);
+    log_shutdown();
     return 0;
 }

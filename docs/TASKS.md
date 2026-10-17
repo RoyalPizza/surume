@@ -4,7 +4,6 @@ Surume is the Gitaluna codebase moved into its own repo. The plan is to redesign
 
 ## Next
 
-- [ ] **Convert `src/` to `dev-standards/cpp/cpp.md`.** Before any other work. snake_case functions/variables/members with module prefixes (`git_get_status`), no namespaces, Allman braces with braces on every `if`/`for`, `CONSTANT_CASE` constants and enum members, no lambdas, no iostreams (`std::istringstream` in `git.cpp`), `auto` only where the standard allows, header comments on every function. Build with `/W4 /WX`. Keep the project overrides: `.hpp` headers, `bin/` + `obj/` output. Fix the four `git.cpp` bugs below (`CreateProcessW`, quoting, renames, quoted paths) in the same pass, since `git_run` and status parsing get rewritten anyway.
 - [ ] **Redesign the app.** Revisit `DESIGN.md` and `ARCHITECTURE.md` before writing more code; treat the current code as a starting point, not the plan.
 - [ ] **Make a logo.** An orange kraken (Surume is the kraken from One Piece). Needs an app icon (`.ico`) as well, embedded via a `.rc` resource file.
 
@@ -12,10 +11,7 @@ Surume is the Gitaluna codebase moved into its own repo. The plan is to redesign
 
 ### Git (`git.cpp`)
 
-- [ ] **Non-ASCII text is garbled.** `Git::Run` uses `CreateProcessA`, so UTF-8 commit messages and non-ASCII repo paths are read in the ANSI code page. Convert to UTF-16 and use `CreateProcessW`.
-- [ ] **Argument quoting is wrong.** `QuoteArg` doesn't double backslashes before a `"` or at the end of a quoted argument, and drops empty arguments. A commit summary ending in `\` or containing `\"` merges or splits arguments.
-- [ ] **Renames are parsed backwards.** Porcelain v1 prints `old -> new`; `GetStatus` stores the old path as `path`. The diff shows the wrong file and the tooltip says "Renamed from" the new name.
-- [ ] **Quoted paths are never unescaped.** Paths with spaces, quotes or non-ASCII characters come back C-quoted; only the outer quotes are stripped. Quoted renames break entirely. Use `git status --porcelain -z` (fixes the rename bug too) and `-c core.quotepath=false`.
+- [ ] **8.3 short paths and `subst` drives are rejected.** `git_get_repo_root` compares the chosen path to Git's long-form top-level path as text, so a path like `C:\Users\ROYALP~1\repo` fails. The folder picker returns long paths, so this only affects paths typed or restored from elsewhere. Normalize with `GetLongPathNameW` or `GetFinalPathNameByHandleW` first.
 - [ ] **Diffs show only the staged part** of a file that has both staged and unstaged changes.
 - [ ] **Commit failure shows an empty reason.** With nothing staged, Git writes "nothing to commit" to stdout, not stderr.
 - [ ] **Conflicts look like modifications.** Unmerged files (`UU`, `AA`, ...) get the yellow `M` badge.
@@ -23,11 +19,11 @@ Surume is the Gitaluna codebase moved into its own repo. The plan is to redesign
 
 ### GUI (`gui.cpp`)
 
-- [ ] **View > Changes / History does nothing.** It sets `state.navMode`, but the tab bar never reads it.
+- [ ] **View > Changes / History does nothing.** It sets `state.nav_mode`, but the tab bar never reads it.
 - [ ] **File > Exit does nothing.**
 - [ ] **Commit button is enabled when nothing is staged.**
-- [ ] **Missing Git isn't handled.** `gitFound` is never checked: no error is shown and repo actions stay enabled.
-- [ ] **Large diffs are slow.** `RenderDiff` draws every line every frame; use `ImGuiListClipper`.
+- [ ] **Missing Git isn't handled.** `is_git_found` is never checked by the GUI: no error is shown and repo actions stay enabled.
+- [ ] **Large diffs are slow.** `render_diff` draws every line every frame; use `ImGuiListClipper`.
 - [ ] **Commit text carries across repo switches**, and the 1024-byte description buffer truncates silently.
 - [ ] **Long relative dates** ("2 years, 3 months ago") overlap the hash in History.
 
@@ -35,7 +31,7 @@ Surume is the Gitaluna codebase moved into its own repo. The plan is to redesign
 
 - [ ] **Settings aren't saved for non-ASCII Windows usernames.** `fopen_s` and `toml_parse_file_ex` take ANSI paths. Use wide-char file APIs.
 - [ ] **Likely spins the CPU while minimized.** `Present(1, 0)` returns immediately when occluded; check for `DXGI_STATUS_OCCLUDED` and sleep, like the ImGui example does.
-- [ ] **`ShutdownWindow` destroys an already-destroyed window** (harmless, but wrong).
+- [ ] **`window_shutdown` destroys an already-destroyed window** (harmless, but wrong).
 - [ ] **`imgui.ini` is written to the working directory.** The app owns its layout, so set `io.IniFilename = nullptr` and drop the `.gitignore` entry.
 
 ## Not Implemented
@@ -59,11 +55,12 @@ Surume is the Gitaluna codebase moved into its own repo. The plan is to redesign
 
 - [ ] High-DPI support (`ImGui_ImplWin32_EnableDpiAwareness` or a manifest); the window is blurry on scaled displays.
 - [ ] Load a TTF font with wider glyph coverage so non-ASCII file names don't render as `?`.
-- [ ] Add `/utf-8` to `build.bat`; sources contain UTF-8 characters.
+- [ ] Add `/utf-8` to `build.bat`; `gui.cpp` contains UTF-8 characters.
 - [ ] Only redraw when something changes instead of rendering at 60 fps while idle.
 - [ ] Save settings when they change, not only on a clean exit.
 - [ ] Stop the GUI calling Git directly; route actions through request flags handled in `main.cpp`, like Open Repository.
 - [ ] Clean up `.gitignore`: drop the leftover CMake, Visual Studio project, compiler output and `*.log` entries.
+- [ ] Add a `compile_flags.txt` so clangd in VS Code finds the ImGui and tomlc17 headers.
 
 ## Done
 
@@ -71,3 +68,6 @@ Surume is the Gitaluna codebase moved into its own repo. The plan is to redesign
 - [x] **Remove CMake.** Replaced with a plain `build.bat`; exe to `bin/`, intermediates to `obj/`.
 - [x] **Tidy the layout.** Docs in `docs/`, lowercase snake_case source files, `.hpp` headers, debug log in `%APPDATA%\Surume`.
 - [x] **Merge modules.** `app` and `platform_win32` folded into `main.cpp`; `ui` renamed to `gui`.
+- [x] **Convert `src/` to `dev-standards/cpp/cpp.md`.** snake_case with module prefixes, no namespaces, Allman braces, named constants, no lambdas, iostreams or member functions, `bool` plus out-parameter error handling, `/W4 /WX`.
+- [x] **Fix `git.cpp` command and parsing bugs** (with the conversion): `CreateProcessW` with UTF-8 to UTF-16 conversion, Windows command-line quoting rules (backslashes, quotes, empty arguments), `git status --porcelain -z` (renames as new/old, no quoted paths), and `-c core.quotepath=false` on every command. Verified against a throwaway repo with a non-ASCII path, a non-ASCII file name with spaces and quotes, a rename, and a commit message with backslashes, quotes and emoji.
+- [x] **Fix branch picker iterating a list it replaces.** Checking out a branch refreshed `state.branches` while the picker was looping over it.

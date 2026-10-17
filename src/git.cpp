@@ -1,379 +1,544 @@
+#include "git.hpp"
+
+#include "log.hpp"
+
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
 
-#include "git.hpp"
-#include "log.hpp"
-#include <sstream>
+#include <cstdio>
+#include <cstring>
+#include <string>
+#include <vector>
 
-static std::string QuoteArg(const std::string& arg) {
-    if (arg.find_first_of(" \t\n\"") == std::string::npos)
-        return arg;
-    std::string out = "\"";
-    for (char c : arg) {
-        if (c == '"') out += "\\\"";
-        else          out += c;
+constexpr DWORD RUN_TIMEOUT_MILLISECONDS = 15000;
+constexpr DWORD POLL_INTERVAL_MILLISECONDS = 10;
+constexpr DWORD PIPE_READ_SIZE = 4096;
+constexpr int MAX_LOG_COMMITS = 100;
+constexpr char LOG_FIELD_SEPARATOR = '\x1f';
+constexpr size_t STATUS_PATH_OFFSET = 3; // "XY path"
+
+// Convert UTF-8 to a null-terminated UTF-16 buffer for Win32 W functions.
+static std::vector<wchar_t> to_wide(const std::string& text)
+{
+    int len = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, nullptr, 0);
+    if (len <= 0)
+    {
+        return std::vector<wchar_t>(1, L'\0');
     }
-    out += '"';
-    return out;
+
+    std::vector<wchar_t> wide(len, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, wide.data(), len);
+    return wide;
 }
 
-static void DrainPipe(HANDLE pipe, std::string& dest) {
-    char buf[4096];
-    DWORD avail = 0;
-    while (PeekNamedPipe(pipe, nullptr, 0, nullptr, &avail, nullptr) && avail > 0) {
-        DWORD toRead  = avail < sizeof(buf) ? avail : (DWORD)sizeof(buf);
-        DWORD nRead   = 0;
-        if (!ReadFile(pipe, buf, toRead, &nRead, nullptr) || nRead == 0) break;
-        dest.append(buf, nRead);
+// Append one argument using the Windows command-line quoting rules, so git's argument
+// parser gives back exactly the original text. Backslashes are only special before a quote.
+static void append_quoted_argument(std::string& command_line, const std::string& argument)
+{
+    if (!argument.empty() && argument.find_first_of(" \t\n\v\"") == std::string::npos)
+    {
+        command_line += argument;
+        return;
+    }
+
+    command_line += '"';
+    size_t backslash_count = 0;
+    for (char c : argument)
+    {
+        if (c == '\\')
+        {
+            ++backslash_count;
+            continue;
+        }
+
+        if (c == '"')
+        {
+            command_line.append(backslash_count * 2 + 1, '\\');
+        }
+        else
+        {
+            command_line.append(backslash_count, '\\');
+        }
+        command_line += c;
+        backslash_count = 0;
+    }
+    command_line.append(backslash_count * 2, '\\');
+    command_line += '"';
+}
+
+static void drain_pipe(HANDLE pipe, std::string& destination)
+{
+    char buf[PIPE_READ_SIZE];
+    DWORD available = 0;
+    while (PeekNamedPipe(pipe, nullptr, 0, nullptr, &available, nullptr) && available > 0)
+    {
+        DWORD to_read = available < PIPE_READ_SIZE ? available : PIPE_READ_SIZE;
+        DWORD read_count = 0;
+        if (!ReadFile(pipe, buf, to_read, &read_count, nullptr) || read_count == 0)
+        {
+            break;
+        }
+        destination.append(buf, read_count);
     }
 }
 
-static std::string Trim(std::string s) {
-    while (!s.empty() && (s.back() == '\n' || s.back() == '\r' || s.back() == ' '))
-        s.pop_back();
-    return s;
+static std::string trim_end(std::string text)
+{
+    while (!text.empty() && (text.back() == '\n' || text.back() == '\r' || text.back() == ' '))
+    {
+        text.pop_back();
+    }
+    return text;
 }
 
-static std::string NormSep(std::string s) {
-    for (char& c : s) if (c == '/') c = '\\';
-    return s;
+static std::string to_backslashes(std::string path)
+{
+    for (char& c : path)
+    {
+        if (c == '/')
+        {
+            c = '\\';
+        }
+    }
+    return path;
+}
+
+// Split text on separator, keeping empty pieces and stripping a trailing '\r' from each.
+static std::vector<std::string> split(const std::string& text, char separator)
+{
+    std::vector<std::string> pieces;
+    size_t start = 0;
+    while (start <= text.size())
+    {
+        size_t end = text.find(separator, start);
+        if (end == std::string::npos)
+        {
+            end = text.size();
+        }
+
+        std::string piece = text.substr(start, end - start);
+        if (!piece.empty() && piece.back() == '\r')
+        {
+            piece.pop_back();
+        }
+        pieces.push_back(piece);
+        start = end + 1;
+    }
+    return pieces;
 }
 
 // -------------------------------------------------------------------------
 
-GitResult Git::Run(const std::string& repoPath, std::vector<std::string> args) {
-    std::string cmdLine = "git";
-    for (const auto& arg : args) {
-        cmdLine += ' ';
-        cmdLine += QuoteArg(arg);
+bool git_run(const std::string& repo_path, const std::vector<std::string>& args,
+    GitResult& result)
+{
+    result = {};
+
+    // quotepath=false keeps non-ASCII paths as UTF-8 instead of octal escapes
+    std::string command_line = "git -c core.quotepath=false";
+    for (const std::string& arg : args)
+    {
+        command_line += ' ';
+        append_quoted_argument(command_line, arg);
     }
-    LOG_DEBUG("Git::Run cwd='%s' cmd='%s'", repoPath.c_str(), cmdLine.c_str());
+    LOG_DEBUG("git_run cwd='%s' cmd='%s'", repo_path.c_str(), command_line.c_str());
 
-    SECURITY_ATTRIBUTES sa = { sizeof(sa), nullptr, TRUE };
-    HANDLE hOutR = nullptr, hOutW = nullptr;
-    HANDLE hErrR = nullptr, hErrW = nullptr;
-
-    if (!CreatePipe(&hOutR, &hOutW, &sa, 0) || !CreatePipe(&hErrR, &hErrW, &sa, 0)) {
-        LOG_ERROR("Git::Run CreatePipe failed: %u", (unsigned)GetLastError());
-        return { -1, "", "CreatePipe failed" };
+    SECURITY_ATTRIBUTES security = { sizeof(security), nullptr, TRUE };
+    HANDLE out_read = nullptr;
+    HANDLE out_write = nullptr;
+    HANDLE error_read = nullptr;
+    HANDLE error_write = nullptr;
+    if (!CreatePipe(&out_read, &out_write, &security, 0))
+    {
+        LOG_ERROR("git_run: CreatePipe failed: %u", (unsigned)GetLastError());
+        result.error_output = "CreatePipe failed";
+        return false;
     }
-    SetHandleInformation(hOutR, HANDLE_FLAG_INHERIT, 0);
-    SetHandleInformation(hErrR, HANDLE_FLAG_INHERIT, 0);
+    if (!CreatePipe(&error_read, &error_write, &security, 0))
+    {
+        LOG_ERROR("git_run: CreatePipe failed: %u", (unsigned)GetLastError());
+        CloseHandle(out_read);
+        CloseHandle(out_write);
+        result.error_output = "CreatePipe failed";
+        return false;
+    }
+    SetHandleInformation(out_read, HANDLE_FLAG_INHERIT, 0);
+    SetHandleInformation(error_read, HANDLE_FLAG_INHERIT, 0);
 
-    STARTUPINFOA si = {};
-    si.cb           = sizeof(si);
-    si.dwFlags      = STARTF_USESTDHANDLES;
-    si.hStdOutput   = hOutW;
-    si.hStdError    = hErrW;
+    STARTUPINFOW startup_info = {};
+    startup_info.cb = sizeof(startup_info);
+    startup_info.dwFlags = STARTF_USESTDHANDLES;
+    startup_info.hStdOutput = out_write;
+    startup_info.hStdError = error_write;
 
-    PROCESS_INFORMATION pi = {};
-    const char* cwd = repoPath.empty() ? nullptr : repoPath.c_str();
+    std::vector<wchar_t> wide_command_line = to_wide(command_line);
+    std::vector<wchar_t> wide_directory = to_wide(repo_path);
+    const wchar_t* directory = repo_path.empty() ? nullptr : wide_directory.data();
 
-    bool created = !!CreateProcessA(
-        nullptr, cmdLine.data(), nullptr, nullptr, TRUE,
-        CREATE_NO_WINDOW, nullptr, cwd, &si, &pi);
+    PROCESS_INFORMATION process_info = {};
+    bool is_created = CreateProcessW(nullptr, wide_command_line.data(), nullptr, nullptr, TRUE,
+        CREATE_NO_WINDOW, nullptr, directory, &startup_info, &process_info) != 0;
 
-    CloseHandle(hOutW);
-    CloseHandle(hErrW);
+    CloseHandle(out_write);
+    CloseHandle(error_write);
 
-    if (!created) {
-        LOG_ERROR("Git::Run CreateProcess failed: %u (is git in PATH?)", (unsigned)GetLastError());
-        CloseHandle(hOutR); CloseHandle(hErrR);
-        return { -1, "", "CreateProcess failed" };
+    if (!is_created)
+    {
+        LOG_ERROR("git_run: CreateProcess failed: %u (is git in PATH?)", (unsigned)GetLastError());
+        CloseHandle(out_read);
+        CloseHandle(error_read);
+        result.error_output = "CreateProcess failed";
+        return false;
     }
 
-    GitResult result;
-    DWORD startTick = GetTickCount();
-
-    while (true) {
-        DrainPipe(hOutR, result.out);
-        DrainPipe(hErrR, result.err);
-        if (WaitForSingleObject(pi.hProcess, 10) == WAIT_OBJECT_0) break;
-        if (GetTickCount() - startTick > 15000) {
-            LOG_WARN("Git::Run timed out — cmd='%s'", cmdLine.c_str());
-            TerminateProcess(pi.hProcess, 1);
+    DWORD start_tick = GetTickCount();
+    while (true)
+    {
+        drain_pipe(out_read, result.output);
+        drain_pipe(error_read, result.error_output);
+        DWORD wait = WaitForSingleObject(process_info.hProcess, POLL_INTERVAL_MILLISECONDS);
+        if (wait == WAIT_OBJECT_0)
+        {
+            break;
+        }
+        if (GetTickCount() - start_tick > RUN_TIMEOUT_MILLISECONDS)
+        {
+            LOG_WARN("git_run timed out: cmd='%s'", command_line.c_str());
+            TerminateProcess(process_info.hProcess, 1);
             break;
         }
     }
-    DrainPipe(hOutR, result.out);
-    DrainPipe(hErrR, result.err);
+    drain_pipe(out_read, result.output);
+    drain_pipe(error_read, result.error_output);
 
-    DWORD exitCode = 1;
-    GetExitCodeProcess(pi.hProcess, &exitCode);
-    result.exitCode = (int)exitCode;
+    DWORD exit_code = 1;
+    GetExitCodeProcess(process_info.hProcess, &exit_code);
+    result.exit_code = (int)exit_code;
 
-    CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
-    CloseHandle(hOutR);       CloseHandle(hErrR);
+    CloseHandle(process_info.hProcess);
+    CloseHandle(process_info.hThread);
+    CloseHandle(out_read);
+    CloseHandle(error_read);
 
-    LOG_DEBUG("Git::Run exit=%d out='%s' err='%s'",
-        result.exitCode, Trim(result.out).c_str(), Trim(result.err).c_str());
-    return result;
+    LOG_DEBUG("git_run exit=%d out='%s' err='%s'", result.exit_code,
+        trim_end(result.output).c_str(), trim_end(result.error_output).c_str());
+    return result.exit_code == 0;
 }
 
-std::string Git::FindGitExecutable() {
-    LOG_INFO("Git::FindGitExecutable");
-    GitResult r = Run("", { "--version" });
-    if (r.Ok()) {
-        LOG_INFO("Git found in PATH: %s", Trim(r.out).c_str());
-        return "git";
+bool git_find_executable(std::string& executable)
+{
+    GitResult result;
+    if (!git_run("", { "--version" }, result))
+    {
+        LOG_WARN("git_find_executable: git not found in PATH");
+        return false;
     }
-    LOG_WARN("Git not found in PATH");
-    return "";
+
+    LOG_INFO("git_find_executable: %s", trim_end(result.output).c_str());
+    executable = "git";
+    return true;
 }
 
-std::string Git::GetRepoRoot(const std::string& path) {
-    LOG_INFO("Git::GetRepoRoot path='%s'", path.c_str());
-    GitResult r = Run(path, { "rev-parse", "--show-toplevel" });
-    if (!r.Ok()) {
-        LOG_WARN("Git::GetRepoRoot failed (exit=%d)", r.exitCode);
-        return "";
+bool git_get_repo_root(const std::string& path, std::string& root)
+{
+    GitResult result;
+    if (!git_run(path, { "rev-parse", "--show-toplevel" }, result))
+    {
+        LOG_WARN("git_get_repo_root: '%s' is not in a work tree", path.c_str());
+        return false;
     }
 
-    std::string root     = NormSep(Trim(r.out));
-    std::string normPath = NormSep(path);
-    while (!root.empty()     && root.back()     == '\\') root.pop_back();
-    while (!normPath.empty() && normPath.back() == '\\') normPath.pop_back();
-
-    if (_stricmp(root.c_str(), normPath.c_str()) != 0) {
-        LOG_WARN("Git::GetRepoRoot: '%s' is a subfolder of '%s' — rejecting", normPath.c_str(), root.c_str());
-        return "";
+    std::string top_level = to_backslashes(trim_end(result.output));
+    std::string normalized_path = to_backslashes(path);
+    while (!top_level.empty() && top_level.back() == '\\')
+    {
+        top_level.pop_back();
     }
-    LOG_INFO("Git::GetRepoRoot validated root='%s'", root.c_str());
-    return root;
+    while (!normalized_path.empty() && normalized_path.back() == '\\')
+    {
+        normalized_path.pop_back();
+    }
+
+    if (_stricmp(top_level.c_str(), normalized_path.c_str()) != 0)
+    {
+        LOG_WARN("git_get_repo_root: '%s' is a subfolder of '%s'",
+            normalized_path.c_str(), top_level.c_str());
+        return false;
+    }
+
+    root = top_level;
+    return true;
 }
 
-std::string Git::GetCurrentBranch(const std::string& repoPath) {
-    // rev-parse fails on repos with zero commits — fall back to symbolic-ref
-    GitResult r = Run(repoPath, { "symbolic-ref", "--short", "HEAD" });
-    if (r.Ok()) {
-        std::string branch = Trim(r.out);
-        LOG_INFO("Git::GetCurrentBranch='%s' (symbolic-ref)", branch.c_str());
-        return branch;
+bool git_get_current_branch(const std::string& repo_path, std::string& branch)
+{
+    // symbolic-ref works on a repository with no commits, where rev-parse fails
+    GitResult result;
+    if (!git_run(repo_path, { "symbolic-ref", "--short", "HEAD" }, result))
+    {
+        LOG_WARN("git_get_current_branch: detached HEAD or error (exit=%d)", result.exit_code);
+        return false;
     }
-    // Detached HEAD: rev-parse returns "HEAD", symbolic-ref fails
-    LOG_WARN("Git::GetCurrentBranch: detached HEAD or error (exit=%d)", r.exitCode);
-    return "";
+
+    branch = trim_end(result.output);
+    return true;
 }
 
-std::vector<BranchInfo> Git::GetBranches(const std::string& repoPath) {
-    LOG_INFO("Git::GetBranches repoPath='%s'", repoPath.c_str());
-    std::vector<BranchInfo> result;
-
-    // Local branches: %(HEAD)|%(refname:short)|%(upstream:short)
-    GitResult local = Run(repoPath, { "branch", "--format=%(HEAD)|%(refname:short)|%(upstream:short)" });
-    if (!local.Ok()) {
-        LOG_WARN("Git::GetBranches local branch query failed");
-        return result;
-    }
-
-    std::vector<std::string> localNames;
-    std::istringstream ls(local.out);
-    std::string line;
-    while (std::getline(ls, line)) {
-        while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
-        if (line.empty()) continue;
-
-        bool isCurrent = !line.empty() && line[0] == '*';
-        size_t p1 = line.find('|');
-        if (p1 == std::string::npos) continue;
-        size_t p2 = line.find('|', p1 + 1);
-        std::string name     = line.substr(p1 + 1, p2 != std::string::npos ? p2 - p1 - 1 : std::string::npos);
-        std::string upstream = p2 != std::string::npos ? line.substr(p2 + 1) : "";
-
-        BranchInfo info;
-        info.name      = name;
-        info.isCurrent = isCurrent;
-        info.location  = upstream.empty() ? BranchLocation::Local : BranchLocation::LocalAndRemote;
-        result.push_back(info);
-        localNames.push_back(name);
-    }
-
-    // Remote branches — add those with no local counterpart as Remote-only
-    GitResult remote = Run(repoPath, { "branch", "-r", "--format=%(refname:short)" });
-    if (remote.Ok()) {
-        std::istringstream rs(remote.out);
-        while (std::getline(rs, line)) {
-            while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
-            if (line.empty()) continue;
-
-            size_t slash = line.find('/');
-            if (slash == std::string::npos) continue;
-            std::string localEquiv = line.substr(slash + 1);
-            if (localEquiv == "HEAD") continue;
-
-            bool hasLocal = false;
-            for (const auto& n : localNames)
-                if (_stricmp(n.c_str(), localEquiv.c_str()) == 0) { hasLocal = true; break; }
-            if (hasLocal) continue;
-
-            BranchInfo info;
-            info.name     = line;
-            info.location = BranchLocation::Remote;
-            result.push_back(info);
+// Search only the first count entries (the local branches).
+static bool has_branch_named(const std::vector<BranchInfo>& branches, size_t count,
+    const std::string& name)
+{
+    for (size_t i = 0; i < count; ++i)
+    {
+        if (_stricmp(branches[i].name.c_str(), name.c_str()) == 0)
+        {
+            return true;
         }
     }
-
-    LOG_INFO("Git::GetBranches found %d branches", (int)result.size());
-    return result;
+    return false;
 }
 
-GitResult Git::CheckoutBranch(const std::string& repoPath, const std::string& name, bool isRemote) {
-    LOG_INFO("Git::CheckoutBranch name='%s' isRemote=%d", name.c_str(), (int)isRemote);
-    if (!isRemote)
-        return Run(repoPath, { "checkout", name });
+bool git_get_branches(const std::string& repo_path, std::vector<BranchInfo>& branches)
+{
+    branches.clear();
 
-    // Remote branch like "origin/main" — create local tracking branch
-    size_t slash      = name.find('/');
-    std::string local = slash != std::string::npos ? name.substr(slash + 1) : name;
-    return Run(repoPath, { "checkout", "-b", local, "--track", name });
+    GitResult local;
+    if (!git_run(repo_path,
+        { "branch", "--format=%(HEAD)|%(refname:short)|%(upstream:short)" }, local))
+    {
+        LOG_WARN("git_get_branches: local branch query failed");
+        return false;
+    }
+
+    for (const std::string& line : split(local.output, '\n'))
+    {
+        size_t first_bar = line.find('|');
+        if (first_bar == std::string::npos)
+        {
+            continue;
+        }
+        size_t second_bar = line.find('|', first_bar + 1);
+        if (second_bar == std::string::npos)
+        {
+            continue;
+        }
+
+        BranchInfo branch;
+        branch.is_current = line[0] == '*';
+        branch.name = line.substr(first_bar + 1, second_bar - first_bar - 1);
+        bool has_upstream = second_bar + 1 < line.size();
+        branch.location = has_upstream ? BranchLocation::LOCAL_AND_REMOTE : BranchLocation::LOCAL;
+        branches.push_back(branch);
+    }
+    size_t local_count = branches.size();
+
+    // Remote branches with no local counterpart are listed as remote-only
+    GitResult remote;
+    if (!git_run(repo_path, { "branch", "-r", "--format=%(refname:short)" }, remote))
+    {
+        return true;
+    }
+
+    for (const std::string& line : split(remote.output, '\n'))
+    {
+        size_t slash = line.find('/');
+        if (slash == std::string::npos)
+        {
+            continue;
+        }
+
+        std::string local_name = line.substr(slash + 1);
+        if (local_name == "HEAD" || has_branch_named(branches, local_count, local_name))
+        {
+            continue;
+        }
+
+        BranchInfo branch;
+        branch.name = line;
+        branch.location = BranchLocation::REMOTE;
+        branches.push_back(branch);
+    }
+    return true;
 }
 
-GitResult Git::CreateBranch(const std::string& repoPath, const std::string& name) {
-    LOG_INFO("Git::CreateBranch name='%s'", name.c_str());
-    return Run(repoPath, { "checkout", "-b", name });
+bool git_checkout_branch(const std::string& repo_path, const std::string& name,
+    bool is_remote, GitResult& result)
+{
+    if (!is_remote)
+    {
+        return git_run(repo_path, { "checkout", name }, result);
+    }
+
+    // "origin/feature/x" becomes local "feature/x" tracking the remote branch
+    size_t slash = name.find('/');
+    std::string local_name = slash != std::string::npos ? name.substr(slash + 1) : name;
+    return git_run(repo_path, { "checkout", "-b", local_name, "--track", name }, result);
 }
 
-GitResult Git::DeleteBranch(const std::string& repoPath, const std::string& name) {
-    LOG_INFO("Git::DeleteBranch name='%s'", name.c_str());
-    return Run(repoPath, { "branch", "-d", name });
+bool git_create_branch(const std::string& repo_path, const std::string& name,
+    GitResult& result)
+{
+    return git_run(repo_path, { "checkout", "-b", name }, result);
 }
 
-GitResult Git::Commit(const std::string& repoPath, const std::string& summary, const std::string& description) {
-    LOG_INFO("Git::Commit summary='%s'", summary.c_str());
+bool git_delete_branch(const std::string& repo_path, const std::string& name,
+    GitResult& result)
+{
+    return git_run(repo_path, { "branch", "-d", name }, result);
+}
+
+bool git_commit(const std::string& repo_path, const std::string& summary,
+    const std::string& description, GitResult& result)
+{
     std::vector<std::string> args = { "commit", "-m", summary };
-    if (!description.empty()) {
+    if (!description.empty())
+    {
         args.push_back("-m");
         args.push_back(description);
     }
-    return Run(repoPath, args);
+    return git_run(repo_path, args, result);
 }
 
-std::string Git::GetDiff(const std::string& repoPath, const FileStatus& file) {
-    LOG_INFO("Git::GetDiff path='%s' x='%c' y='%c'", file.path.c_str(), file.x, file.y);
+bool git_get_log(const std::string& repo_path, std::vector<CommitInfo>& commits)
+{
+    commits.clear();
 
-    GitResult r;
+    char max_count[32];
+    snprintf(max_count, sizeof(max_count), "--max-count=%d", MAX_LOG_COMMITS);
 
-    if (file.x == '?' && file.y == '?') {
-        // Untracked: diff against /dev/null to show the whole file as added
-        r = Run(repoPath, { "diff", "--no-index", "--", "/dev/null", file.path });
-        // --no-index exits 1 when files differ (always), treat as ok
-        if (!r.out.empty()) return r.out;
-        return r.err.empty() ? "(empty file)" : r.err;
+    GitResult result;
+    if (!git_run(repo_path, { "log", max_count, "--format=%h%x1f%an%x1f%ar%x1f%s" }, result))
+    {
+        LOG_WARN("git_get_log failed (exit=%d): %s", result.exit_code,
+            trim_end(result.error_output).c_str());
+        return false;
     }
 
-    if (file.x != ' ') {
-        // Has staged changes — show what's in the index vs HEAD (or empty tree for new repos)
-        r = Run(repoPath, { "diff", "--cached", "--", file.path });
-        if (r.Ok() && !r.out.empty()) return r.out;
-    }
-
-    if (file.y != ' ') {
-        // Has unstaged working-tree changes
-        r = Run(repoPath, { "diff", "--", file.path });
-        if (r.Ok() && !r.out.empty()) return r.out;
-    }
-
-    if (!r.out.empty()) return r.out;
-    LOG_WARN("Git::GetDiff produced no output (exit=%d err='%s')", r.exitCode, r.err.c_str());
-    return "";
-}
-
-std::vector<FileStatus> Git::GetStatus(const std::string& repoPath) {
-    LOG_INFO("Git::GetStatus repoPath='%s'", repoPath.c_str());
-
-    GitResult r = Run(repoPath, { "status", "--porcelain", "-u" });
-    std::vector<FileStatus> result;
-    if (!r.Ok()) {
-        LOG_WARN("Git::GetStatus failed (exit=%d): %s", r.exitCode, Trim(r.err).c_str());
-        return result;
-    }
-
-    std::istringstream ss(r.out);
-    std::string line;
-    while (std::getline(ss, line)) {
-        while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
-        if (line.size() < 4) continue; // need "XY path"
-
-        FileStatus f;
-        f.x = line[0];
-        f.y = line[1];
-        // line[2] is always a space
-        std::string rest = line.substr(3);
-
-        // Strip surrounding quotes (git quotes paths with special chars)
-        if (!rest.empty() && rest.front() == '"' && rest.back() == '"')
-            rest = rest.substr(1, rest.size() - 2);
-
-        // Rename: "new -> old"
-        size_t arrow = rest.find(" -> ");
-        if (arrow != std::string::npos) {
-            f.path    = rest.substr(0, arrow);
-            f.oldPath = rest.substr(arrow + 4);
-        } else {
-            f.path = rest;
+    for (const std::string& line : split(result.output, '\n'))
+    {
+        std::vector<std::string> fields = split(line, LOG_FIELD_SEPARATOR);
+        if (fields.size() < 4)
+        {
+            continue;
         }
 
-        result.push_back(std::move(f));
+        CommitInfo commit;
+        commit.hash = fields[0];
+        commit.author = fields[1];
+        commit.date = fields[2];
+        commit.subject = fields[3];
+        commits.push_back(commit);
     }
-
-    LOG_INFO("Git::GetStatus found %d changed files", (int)result.size());
-    return result;
+    return true;
 }
 
-std::vector<CommitInfo> Git::GetLog(const std::string& repoPath, int maxCount) {
-    LOG_INFO("Git::GetLog repoPath='%s' max=%d", repoPath.c_str(), maxCount);
+bool git_get_status(const std::string& repo_path, std::vector<FileStatus>& files)
+{
+    files.clear();
 
-    // Use ASCII unit separator (0x1F) as field delimiter — safe in any commit message.
-    char maxStr[32];
-    std::snprintf(maxStr, sizeof(maxStr), "%d", maxCount);
-    GitResult r = Run(repoPath, {
-        "log",
-        "--max-count=" + std::string(maxStr),
-        "--format=%h\x1f%an\x1f%ar\x1f%s"
-    });
-
-    std::vector<CommitInfo> result;
-    if (!r.Ok()) {
-        LOG_WARN("Git::GetLog failed (exit=%d): %s", r.exitCode, Trim(r.err).c_str());
-        return result;
+    // -z: NUL-separated, paths never quoted. A rename is "XY new\0old\0".
+    GitResult result;
+    if (!git_run(repo_path, { "status", "--porcelain", "-z", "-u" }, result))
+    {
+        LOG_WARN("git_get_status failed (exit=%d): %s", result.exit_code,
+            trim_end(result.error_output).c_str());
+        return false;
     }
 
-    std::istringstream ss(r.out);
-    std::string line;
-    while (std::getline(ss, line)) {
-        while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
-        if (line.empty()) continue;
+    std::vector<std::string> entries = split(result.output, '\0');
+    size_t i = 0;
+    while (i < entries.size())
+    {
+        const std::string& entry = entries[i];
+        ++i;
+        if (entry.size() <= STATUS_PATH_OFFSET)
+        {
+            continue;
+        }
 
-        auto field = [&](size_t& pos) -> std::string {
-            size_t end = line.find('\x1f', pos);
-            std::string f = line.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
-            pos = end == std::string::npos ? line.size() : end + 1;
-            return f;
-        };
+        FileStatus file;
+        file.index_status = entry[0];
+        file.worktree_status = entry[1];
+        file.path = entry.substr(STATUS_PATH_OFFSET);
 
-        size_t pos = 0;
-        CommitInfo c;
-        c.hash    = field(pos);
-        c.author  = field(pos);
-        c.date    = field(pos);
-        c.subject = field(pos);
-        result.push_back(std::move(c));
+        bool is_renamed_or_copied = file.index_status == 'R' || file.index_status == 'C' ||
+            file.worktree_status == 'R' || file.worktree_status == 'C';
+        if (is_renamed_or_copied && i < entries.size())
+        {
+            file.old_path = entries[i];
+            ++i;
+        }
+        files.push_back(file);
     }
-
-    LOG_INFO("Git::GetLog returned %d commits", (int)result.size());
-    return result;
+    return true;
 }
 
-void Git::RefreshRepoState(AppState& state) {
-    if (state.activeRepo.empty()) return;
-    LOG_INFO("Git::RefreshRepoState repo='%s'", state.activeRepo.c_str());
-    state.currentBranch   = GetCurrentBranch(state.activeRepo);
-    state.branches        = GetBranches(state.activeRepo);
-    state.changedFiles    = GetStatus(state.activeRepo);
-    state.commits         = GetLog(state.activeRepo);
-    state.selectedFileIdx = -1;
-    state.currentDiff.clear();
-    LOG_INFO("Git::RefreshRepoState done — branch='%s' branches=%d commits=%d",
-        state.currentBranch.c_str(), (int)state.branches.size(), (int)state.commits.size());
+bool git_get_diff(const std::string& repo_path, const FileStatus& file, std::string& diff)
+{
+    GitResult result;
+
+    if (file.index_status == '?' && file.worktree_status == '?')
+    {
+        // --no-index exits 1 whenever the files differ, which is always here
+        git_run(repo_path, { "diff", "--no-index", "--", "/dev/null", file.path }, result);
+        if (!result.output.empty())
+        {
+            diff = result.output;
+        }
+        else if (!result.error_output.empty())
+        {
+            diff = result.error_output;
+        }
+        else
+        {
+            diff = "(empty file)";
+        }
+        return true;
+    }
+
+    if (file.index_status != ' ')
+    {
+        if (git_run(repo_path, { "diff", "--cached", "--", file.path }, result) &&
+            !result.output.empty())
+        {
+            diff = result.output;
+            return true;
+        }
+    }
+
+    if (file.worktree_status != ' ')
+    {
+        if (git_run(repo_path, { "diff", "--", file.path }, result) && !result.output.empty())
+        {
+            diff = result.output;
+            return true;
+        }
+    }
+
+    LOG_WARN("git_get_diff produced no output for '%s' (exit=%d err='%s')",
+        file.path.c_str(), result.exit_code, trim_end(result.error_output).c_str());
+    return false;
+}
+
+void git_refresh_repo_state(AppState& state)
+{
+    if (state.active_repo.empty())
+    {
+        return;
+    }
+
+    if (!git_get_current_branch(state.active_repo, state.current_branch))
+    {
+        state.current_branch.clear();
+    }
+    git_get_branches(state.active_repo, state.branches);
+    git_get_status(state.active_repo, state.changed_files);
+    git_get_log(state.active_repo, state.commits);
+    state.selected_file_index = -1;
+    state.current_diff.clear();
+
+    LOG_INFO("git_refresh_repo_state: branch='%s' branches=%d files=%d commits=%d",
+        state.current_branch.c_str(), (int)state.branches.size(),
+        (int)state.changed_files.size(), (int)state.commits.size());
 }

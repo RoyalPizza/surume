@@ -10,7 +10,7 @@
 
 ## Engineering Principles
 
-- Use simple C-style C++: `.cpp` and `.hpp` files, plain structs, free functions, explicit state, minimal inheritance, and minimal template cleverness.
+- Follow `dev-standards/cpp/cpp.md` (C-style C++: plain structs, free functions with module prefixes such as `git_get_status`, snake_case, Allman braces, no lambdas or member functions, failures returned as `bool` with out parameters, `/W4 /WX`). Project overrides: `.hpp` headers, build output in `bin/` and `obj/`.
 - Prefer code that is easy to step through in a debugger.
 - Keep modules split by responsibility without building a deep framework layer.
 - Keep Dear ImGui panel code close to the state and operations it edits.
@@ -52,12 +52,12 @@ The first version requires an installed `git` executable. Surume should detect G
 ## Major Modules
 
 - `main.cpp`: entry point and everything Windows-specific. Win32 window, D3D11 and ImGui backend setup, frame present, the folder dialog, Open in Explorer/Terminal, and the app-data path. Also app startup (Git detection, loading persistence, restoring the last repository), the main loop, shutdown, and deferred requests from the UI (open repository, open in Explorer/Terminal, repository switch, diff load), handled after each frame is presented.
-- `Gui`: Dear ImGui screens, panels, dialogs, and layout.
-- `Git`: Git command execution and parsing for status, diff, branches, commits, and log, plus `RefreshRepoState` to reload all of it into `AppState`. Sync operations are not implemented yet.
-- `Model`: header-only. The central `AppState` struct and the plain data types it holds.
-- `Jobs`: background task queue for Git operations. Not implemented yet.
-- `Persistence`: recent repositories, panel layout, user preferences. Serialization via TOML using tomlc17.
-- `Log`: diagnostic log file, compiled in only for debug builds (`SURUME_DEBUG`). User-visible operation results go through `AppState::statusMessage`.
+- `gui`: Dear ImGui screens, panels, dialogs, and layout. Entry point `gui_render`.
+- `git`: Git command execution (`git_run`) and parsing for status, diff, branches, commits, and log, plus `git_refresh_repo_state` to reload all of it into `AppState`. Sync operations are not implemented yet.
+- `model`: header-only. The central `AppState` struct and the plain data types it holds.
+- `jobs`: background task queue for Git operations. Not implemented yet.
+- `persistence`: recent repositories, panel layout, user preferences. Serialization via TOML using tomlc17.
+- `log`: diagnostic log file, compiled in only for debug builds (`SURUME_DEBUG`). User-visible operation results go through `AppState::status_message`.
 
 ## Git Command Execution
 
@@ -127,7 +127,7 @@ Prefer machine-readable Git output where available:
 
 Avoid parsing human-oriented output unless no structured form exists.
 
-Current code uses `git status --porcelain -u` (porcelain v1, no `--branch`), `git branch --format=...`, `git branch -r --format=...`, `git log --format=...`, `git symbolic-ref --short HEAD`, and `git diff` / `git diff --cached` / `git diff --no-index`. Upstream, remote, and numstat queries are not used yet.
+Every command runs with `-c core.quotepath=false` so paths stay UTF-8. Current code uses `git status --porcelain -z -u` (porcelain v1, NUL-separated, no `--branch`), `git branch --format=...`, `git branch -r --format=...`, `git log --format=...`, `git symbolic-ref --short HEAD`, and `git diff` / `git diff --cached` / `git diff --no-index`. Upstream, remote, and numstat queries are not used yet.
 
 Sync behavior should be based on the current branch's upstream remote when available. If no upstream exists, `origin` is the preferred default for fetch/publish language. If no upstream exists and multiple remotes exist without `origin`, the app should require an explicit remote choice before publishing instead of guessing.
 

@@ -1,82 +1,97 @@
 #pragma once
+
 #include <string>
 #include <vector>
 
-enum class NavMode { Changes, History };
-
-enum class BranchLocation { Local, Remote, LocalAndRemote };
-
-struct BranchInfo {
-    std::string    name;
-    BranchLocation location  = BranchLocation::Local;
-    bool           isCurrent = false;
+enum class NavMode
+{
+    CHANGES,
+    HISTORY,
 };
 
-struct FileStatus {
+enum class BranchLocation
+{
+    LOCAL,
+    REMOTE,
+    LOCAL_AND_REMOTE,
+};
+
+struct BranchInfo
+{
+    std::string name;
+    BranchLocation location = BranchLocation::LOCAL;
+    bool is_current = false;
+};
+
+struct FileStatus
+{
     std::string path;
-    std::string oldPath; // non-empty only for renames
-    char        x = ' '; // index (staged) status
-    char        y = ' '; // worktree status
+    std::string old_path; // non-empty only for renames and copies
+    char index_status = ' ';    // porcelain X: staged state
+    char worktree_status = ' '; // porcelain Y: working tree state
 };
 
-struct CommitInfo {
+struct CommitInfo
+{
     std::string hash;    // short hash
     std::string author;
-    std::string date;    // relative (e.g. "3 hours ago")
-    std::string subject; // first line of message
+    std::string date;    // relative, e.g. "3 hours ago"
+    std::string subject; // first line of the message
 };
 
-struct AppSettings {
-    std::string gitPath;
-    std::string defaultOpenDir;
-    bool        autoFetchEnabled     = false;
-    int         autoFetchIntervalMin = 15;
+struct AppSettings
+{
+    std::string git_path;
+    std::string default_open_directory;
+    bool is_auto_fetch_enabled = false;
+    int auto_fetch_interval_minutes = 15;
 };
 
-struct AppState {
+struct AppState
+{
     // Repository
-    std::string              activeRepo;
-    std::string              activeRepoName;
-    std::vector<std::string> recentRepos;
+    std::string active_repo;
+    std::string active_repo_name;
+    std::vector<std::string> recent_repos;
 
     // Branch
-    std::string             currentBranch;
+    std::string current_branch;
     std::vector<BranchInfo> branches;
 
     // Changes
-    std::vector<FileStatus> changedFiles;
-    int         selectedFileIdx = -1; // index into changedFiles
-    bool        requestDiff     = false;
-    std::string currentDiff;
+    std::vector<FileStatus> changed_files;
+    int selected_file_index = -1; // index into changed_files
+    std::string current_diff;
 
     // History
     std::vector<CommitInfo> commits;
 
     // Navigation
-    NavMode navMode = NavMode::Changes;
+    NavMode nav_mode = NavMode::CHANGES;
 
-    // UI layout (persisted)
-    float leftColumnWidth = 280.0f;
+    // Layout (persisted)
+    float left_column_width = 280.0f;
 
     // Settings (persisted)
     AppSettings settings;
 
     // Git
-    bool        gitFound    = false;
-    std::string gitExePath;
+    bool is_git_found = false;
+    std::string git_executable;
 
-    // Deferred actions (handled in main.cpp after Present)
-    bool        requestOpenRepo       = false;
-    bool        requestOpenInExplorer = false;
-    bool        requestOpenInTerminal = false;
-    std::string requestSwitchRepoPath;
+    // Requests from the GUI, handled in main.cpp after the frame is presented
+    bool is_open_repo_requested = false;
+    bool is_open_in_explorer_requested = false;
+    bool is_open_in_terminal_requested = false;
+    bool is_diff_requested = false;
+    std::string switch_repo_path; // non-empty requests a repository switch
 
-    // Modal visibility flags (set in UI, cleared after OpenPopup)
-    bool showNewBranchModal    = false;
-    bool showDeleteBranchModal = false;
-    bool showAboutModal        = false;
-    bool showSettingsModal     = false;
+    // Modal open requests (set by the GUI, cleared once the popup is opened)
+    bool is_new_branch_modal_requested = false;
+    bool is_delete_branch_modal_requested = false;
+    bool is_about_modal_requested = false;
+    bool is_settings_modal_requested = false;
 
-    // Status / error display
-    std::string statusMessage;
+    // Last error shown to the user; empty when there is nothing to show
+    std::string status_message;
 };

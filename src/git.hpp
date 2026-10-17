@@ -1,52 +1,66 @@
 #pragma once
+
 #include "model.hpp"
+
 #include <string>
 #include <vector>
 
-struct GitResult {
-    int         exitCode = -1;
-    std::string out;
-    std::string err;
-    bool Ok() const { return exitCode == 0; }
+struct GitResult
+{
+    int exit_code = -1;
+    std::string output;       // stdout
+    std::string error_output; // stderr
 };
 
-namespace Git {
-    // Run a git command in repoPath with the given args (no shell expansion).
-    GitResult Run(const std::string& repoPath, std::vector<std::string> args);
+// Run git with args in repo_path (empty = current directory). Arguments are passed as a
+// vector and quoted for the Windows command line; there is no shell. Text is UTF-8.
+// Returns true if git ran and exited 0. result is filled either way.
+bool git_run(const std::string& repo_path, const std::vector<std::string>& args,
+    GitResult& result);
 
-    // Check if git is available. Returns "git" if found in PATH, empty otherwise.
-    std::string FindGitExecutable();
+// Check that git can be run from PATH. Returns false if it can't; executable is set to the
+// command used to run it.
+bool git_find_executable(std::string& executable);
 
-    // Validate path as a repo root. Returns canonical root (backslashes) or empty.
-    std::string GetRepoRoot(const std::string& path);
+// Validate path as a repository root. Returns false if path isn't inside a work tree or is
+// a subfolder of one. root is the normalized root with backslashes.
+bool git_get_repo_root(const std::string& path, std::string& root);
 
-    // Returns current branch name, or empty on detached HEAD or error.
-    std::string GetCurrentBranch(const std::string& repoPath);
+// Read the current branch name. Returns false on detached HEAD or error.
+bool git_get_current_branch(const std::string& repo_path, std::string& branch);
 
-    // Returns all local and remote branches.
-    std::vector<BranchInfo> GetBranches(const std::string& repoPath);
+// List local branches plus remote branches that have no local counterpart.
+// Returns false if the local branch query fails.
+bool git_get_branches(const std::string& repo_path, std::vector<BranchInfo>& branches);
 
-    // Checkout an existing branch. Pass isRemote=true to auto-create a local tracking branch.
-    GitResult CheckoutBranch(const std::string& repoPath, const std::string& name, bool isRemote);
+// Check out an existing branch. For a remote branch ("origin/x"), creates a local tracking
+// branch. Returns false on failure; result holds git's error output.
+bool git_checkout_branch(const std::string& repo_path, const std::string& name,
+    bool is_remote, GitResult& result);
 
-    // Create a new branch from HEAD and check it out.
-    GitResult CreateBranch(const std::string& repoPath, const std::string& name);
+// Create a branch from HEAD and check it out. Returns false on failure.
+bool git_create_branch(const std::string& repo_path, const std::string& name,
+    GitResult& result);
 
-    // Delete a local branch (safe delete — fails if unmerged).
-    GitResult DeleteBranch(const std::string& repoPath, const std::string& name);
+// Safe-delete a local branch (fails if unmerged). Returns false on failure.
+bool git_delete_branch(const std::string& repo_path, const std::string& name,
+    GitResult& result);
 
-    // Commit staged changes.
-    GitResult Commit(const std::string& repoPath, const std::string& summary, const std::string& description);
+// Commit staged changes. description may be empty. Returns false on failure.
+bool git_commit(const std::string& repo_path, const std::string& summary,
+    const std::string& description, GitResult& result);
 
-    // Return up to maxCount commits on the current branch.
-    std::vector<CommitInfo> GetLog(const std::string& repoPath, int maxCount = 100);
+// Read recent commits on the current branch, newest first. Returns false on error
+// (including a repository with no commits yet).
+bool git_get_log(const std::string& repo_path, std::vector<CommitInfo>& commits);
 
-    // Return working tree and index status for all changed files.
-    std::vector<FileStatus> GetStatus(const std::string& repoPath);
+// Read index and working tree status for every changed file. Returns false on error.
+bool git_get_status(const std::string& repo_path, std::vector<FileStatus>& files);
 
-    // Return unified diff for a single file.
-    std::string GetDiff(const std::string& repoPath, const FileStatus& file);
+// Build a unified diff for one file: staged changes if any, otherwise working tree changes.
+// Untracked files diff against an empty file. Returns false if git produced no diff.
+bool git_get_diff(const std::string& repo_path, const FileStatus& file, std::string& diff);
 
-    // Re-read branch, branches, status, and log for state.activeRepo. Clears the file selection.
-    void RefreshRepoState(AppState& state);
-}
+// Reload branch, branches, status and log for state.active_repo and clear the file
+// selection. Lists are left empty for any query that fails.
+void git_refresh_repo_state(AppState& state);

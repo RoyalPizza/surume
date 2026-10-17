@@ -1,67 +1,103 @@
 #include "log.hpp"
 
-#ifdef SURUME_DEBUG
-
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
-#include <cstdio>
+
 #include <cstdarg>
-#include <ctime>
+#include <cstdio>
+#include <string>
 
-static FILE* g_log = nullptr;
+#ifdef SURUME_DEBUG
 
-static const char* Basename(const char* path) {
-    const char* p = path;
-    const char* last = path;
-    while (*p) {
-        if (*p == '/' || *p == '\\') last = p + 1;
-        ++p;
+static FILE* log_file = nullptr;
+
+// Strip directories so log lines show "git.cpp" instead of the full build path.
+static const char* file_name_from_path(const char* path)
+{
+    const char* name = path;
+    for (const char* ptr = path; *ptr != '\0'; ++ptr)
+    {
+        if (*ptr == '/' || *ptr == '\\')
+        {
+            name = ptr + 1;
+        }
     }
-    return last;
+    return name;
 }
 
-void Log::Init(const std::string& dir) {
-    if (dir.empty()) return;
+void log_init(const std::string& dir)
+{
+    if (dir.empty())
+    {
+        return;
+    }
+
     std::string path = dir + "surume_debug.log";
+    wchar_t wide_path[MAX_PATH] = {};
+    if (MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, wide_path, MAX_PATH) == 0)
+    {
+        return;
+    }
 
-    wchar_t widePath[MAX_PATH] = {};
-    MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, widePath, MAX_PATH);
+    if (_wfopen_s(&log_file, wide_path, L"w") != 0 || log_file == nullptr)
+    {
+        log_file = nullptr;
+        return;
+    }
 
-    _wfopen_s(&g_log, widePath, L"w");
-    if (!g_log) return;
-
-    fprintf(g_log, "=== Surume Debug Log ===\n");
-    fprintf(g_log, "Log file: %s\n", path.c_str());
-    fprintf(g_log, "==========================\n\n");
-    fflush(g_log);
+    fprintf(log_file, "=== Surume Debug Log ===\n");
+    fprintf(log_file, "Log file: %s\n", path.c_str());
+    fprintf(log_file, "==========================\n\n");
+    fflush(log_file);
 }
 
-void Log::Shutdown() {
-    if (!g_log) return;
-    fprintf(g_log, "\n=== Shutdown ===\n");
-    fflush(g_log);
-    fclose(g_log);
-    g_log = nullptr;
+void log_shutdown()
+{
+    if (log_file == nullptr)
+    {
+        return;
+    }
+
+    fprintf(log_file, "\n=== Shutdown ===\n");
+    fclose(log_file);
+    log_file = nullptr;
 }
 
-void Log::Write(const char* level, const char* file, int line, const char* fmt, ...) {
-    if (!g_log) return;
+void log_write(const char* level, const char* file, int line, const char* format, ...)
+{
+    if (log_file == nullptr)
+    {
+        return;
+    }
 
-    SYSTEMTIME st;
-    GetLocalTime(&st);
-
-    fprintf(g_log, "[%02d:%02d:%02d.%03d] [%-5s] %s:%d: ",
-        st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
-        level, Basename(file), line);
+    SYSTEMTIME time;
+    GetLocalTime(&time);
+    fprintf(log_file, "[%02d:%02d:%02d.%03d] [%-5s] %s:%d: ",
+        time.wHour, time.wMinute, time.wSecond, time.wMilliseconds,
+        level, file_name_from_path(file), line);
 
     va_list args;
-    va_start(args, fmt);
-    vfprintf(g_log, fmt, args);
+    va_start(args, format);
+    vfprintf(log_file, format, args);
     va_end(args);
 
-    fprintf(g_log, "\n");
-    fflush(g_log);
+    fprintf(log_file, "\n");
+    fflush(log_file);
+}
+
+#else
+
+void log_init(const std::string&)
+{
+}
+
+void log_shutdown()
+{
+}
+
+void log_write(const char*, const char*, int, const char*, ...)
+{
 }
 
 #endif
