@@ -1,4 +1,3 @@
-#include "git.hpp"
 #include "gui.hpp"
 #include "jobs.hpp"
 #include "log.hpp"
@@ -18,7 +17,6 @@
 #include <shobjidl.h>
 
 #include <algorithm>
-#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -37,6 +35,9 @@ constexpr const wchar_t* WINDOW_CLASS_NAME = L"SurumeWnd";
 constexpr int TERMINAL_ARGS_SIZE = MAX_PATH * 2;
 constexpr WORD APP_ICON_ID = 1; // ICON resource in surume.rc
 constexpr DWORD OCCLUDED_SLEEP_MILLISECONDS = 10;
+constexpr int ACTIVE_FRAMES = 3;                  // frames drawn after an event, so UI settles
+constexpr DWORD CURSOR_BLINK_MILLISECONDS = 400; // redraw rate while a text field is focused
+constexpr DWORD HOVER_POLL_MILLISECONDS = 100;   // redraw rate while hovering, for tooltips
 constexpr float BASE_DPI = 96.0f;
 constexpr float UI_FONT_SIZE = 16.0f; // also used for the monospace diff font
 constexpr const wchar_t* UI_FONT_FILE = L"segoeui.ttf";
@@ -835,6 +836,32 @@ static void handle_request(AppState& state, const Request& request, Window& wind
     }
 }
 
+// Block until there is input, a job result, or a reason to draw, so an idle window costs
+// nothing. active_frames counts down the frames still to draw after the last event.
+static void wait_for_events(int& active_frames)
+{
+    DWORD timeout = INFINITE;
+    if (active_frames > 0)
+    {
+        timeout = 0;
+    }
+    else if (ImGui::GetIO().WantTextInput)
+    {
+        timeout = CURSOR_BLINK_MILLISECONDS;
+    }
+    else if (ImGui::IsAnyItemHovered())
+    {
+        timeout = HOVER_POLL_MILLISECONDS;
+    }
+
+    HANDLE wake = (HANDLE)jobs_wake_event();
+    DWORD wait = MsgWaitForMultipleObjects(1, &wake, FALSE, timeout, QS_ALLINPUT);
+    if (wait == WAIT_OBJECT_0 || wait == WAIT_OBJECT_0 + 1)
+    {
+        active_frames = ACTIVE_FRAMES;
+    }
+}
+
 // Handle the requests the GUI made this frame. Runs after present so a dialog doesn't stall a
 // half-drawn frame.
 static void handle_requests(AppState& state, Window& window, const std::string& app_data_dir)
@@ -872,8 +899,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     app_init(state, app_data_dir);
 
     int frame_count = 0;
+    int active_frames = ACTIVE_FRAMES;
     while (true)
     {
+        wait_for_events(active_frames);
         pump_messages(main_window);
         if (main_window.is_quit_requested)
         {
@@ -893,6 +922,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         handle_requests(state, main_window, app_data_dir);
 
         ++frame_count;
+        if (active_frames > 0)
+        {
+            --active_frames;
+        }
         if (frame_count % HEARTBEAT_FRAMES == 0)
         {
             LOG_DEBUG("heartbeat: frame %d", frame_count);
