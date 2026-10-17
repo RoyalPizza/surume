@@ -677,6 +677,7 @@ static void apply_open_repo(AppState& state, const JobResult& result)
     state.current_diff.clear();
     state.status_message.clear();
     state.unticked_paths.clear();
+    state.is_large_diff_confirmed = false;
     clear_commit_text(state);
     state.repo = result.snapshot;
     push_request(state, RequestKind::SAVE_SETTINGS);

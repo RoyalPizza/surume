@@ -27,6 +27,8 @@ constexpr float EMPTY_STATE_BUTTON_WIDTH = 200.0f;
 constexpr float EMPTY_HINT_Y_FRACTION = 0.45f;
 constexpr float STATUS_MESSAGE_MARGIN_X = 8.0f;
 constexpr float STATUS_MESSAGE_MARGIN_BOTTOM = 4.0f;
+constexpr size_t LARGE_DIFF_BYTES = 4 * 1024 * 1024; // placeholder above this
+constexpr float BYTES_PER_MEGABYTE = 1024.0f * 1024.0f;
 constexpr float DIFF_BACKGROUND_OVERSCAN = 8000.0f; // reaches past horizontal scroll
 
 // Modals
@@ -835,6 +837,7 @@ static void render_file_row(AppState& state, int index, const FileRowLayout& lay
     {
         state.selected_file_path = file.path;
         state.current_diff.clear();
+        state.is_large_diff_confirmed = false;
         request(state, RequestKind::LOAD_DIFF);
     }
     if (!file.old_path.empty() && ImGui::IsItemHovered())
@@ -1223,6 +1226,41 @@ static void render_empty_state(AppState& state, ImVec2 available)
     ImGui::TextDisabled("No repository open");
 }
 
+// Git prints "Binary files a/x and b/x differ" instead of hunks for binary changes.
+static bool is_binary_diff(const std::string& diff)
+{
+    bool has_binary_line = diff.rfind("Binary files ", 0) == 0 ||
+        diff.find("\nBinary files ") != std::string::npos;
+    return has_binary_line && diff.find("\n@@") == std::string::npos;
+}
+
+// Show the diff, or a placeholder for binary files and diffs over the size limit.
+static void render_diff_or_placeholder(AppState& state, ImVec2 available)
+{
+    const std::string& diff = state.current_diff;
+    float hint_y = available.y * EMPTY_HINT_Y_FRACTION;
+    if (is_binary_diff(diff))
+    {
+        render_centered_hint("Binary file changed. No text diff to show.", hint_y);
+        return;
+    }
+    if (diff.size() > LARGE_DIFF_BYTES && !state.is_large_diff_confirmed)
+    {
+        char message[PICKER_LABEL_SIZE];
+        snprintf(message, sizeof(message), "This diff is large (%.1f MB).",
+            diff.size() / BYTES_PER_MEGABYTE);
+        render_centered_hint(message, hint_y);
+        float button_width = scaled(EMPTY_STATE_BUTTON_WIDTH);
+        ImGui::SetCursorPosX((available.x - button_width) * 0.5f);
+        if (ImGui::Button("Show anyway", ImVec2(button_width, 0)))
+        {
+            state.is_large_diff_confirmed = true;
+        }
+        return;
+    }
+    render_diff(diff);
+}
+
 static void render_right_content(AppState& state)
 {
     ImVec2 available = ImGui::GetContentRegionAvail();
@@ -1238,7 +1276,7 @@ static void render_right_content(AppState& state)
     }
     else
     {
-        render_diff(state.current_diff);
+        render_diff_or_placeholder(state, available);
     }
 
     if (!state.status_message.empty())

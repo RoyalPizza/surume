@@ -68,8 +68,8 @@ bool git_get_status(const std::string& repo_path, BranchStatus& branch,
 // git_get_status without the branch information.
 bool git_get_status(const std::string& repo_path, std::vector<FileStatus>& files);
 
-// Build a unified diff for one file: staged changes if any, otherwise working tree changes.
-// Untracked files diff against an empty file. Returns false if git produced no diff.
+// Build a unified diff of one file's working tree against HEAD (staged and unstaged changes
+// together). Untracked files diff against an empty file. Returns false if git produced none.
 bool git_get_diff(const std::string& repo_path, const FileStatus& file, std::string& diff);
 
 // Read branch, branches, status and log into snapshot. Returns false if the status query

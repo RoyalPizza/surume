@@ -117,6 +117,7 @@ struct AppState
     NavMode nav_mode = NavMode::CHANGES;
     std::string selected_file_path; // empty when no file is selected
     std::string current_diff;       // diff of selected_file_path, once loaded
+    bool is_large_diff_confirmed = false; // user chose to show a diff over the size limit
     float left_column_width = 280.0f; // unscaled; persisted
 
     // Background work (refreshed from the jobs module every frame)

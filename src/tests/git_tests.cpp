@@ -351,6 +351,39 @@ static void test_commit_paths(const std::string& root)
         "empty selection fails with git's reason (from stdout)");
 }
 
+static void test_diff(const std::string& root)
+{
+    std::string repo = create_repo(root, "diff");
+    write_file(repo + "\\a.txt", "one\ntwo\n");
+    write_file(repo + "\\bin.dat", "x");
+    run(repo, { "add", "." });
+    run(repo, { "commit", "-q", "-m", "init" });
+
+    // One change staged, another only in the working tree
+    write_file(repo + "\\a.txt", "ONE\ntwo\n");
+    run(repo, { "add", "a.txt" });
+    write_file(repo + "\\a.txt", "ONE\nTWO\n");
+
+    FileStatus file;
+    file.path = "a.txt";
+    file.index_status = 'M';
+    file.worktree_status = 'M';
+    std::string diff;
+    check(git_get_diff(repo, file, diff) && diff.find("+ONE") != std::string::npos &&
+        diff.find("+TWO") != std::string::npos, "diff shows staged and unstaged changes together");
+
+    FILE* binary = nullptr;
+    _wfopen_s(&binary, to_wide(repo + "\\bin.dat").data(), L"wb");
+    const char bytes[] = { 0, 1, 2, 0, 3 };
+    fwrite(bytes, 1, sizeof(bytes), binary);
+    fclose(binary);
+    FileStatus binary_file;
+    binary_file.path = "bin.dat";
+    binary_file.worktree_status = 'M';
+    check(git_get_diff(repo, binary_file, diff) && diff.find("Binary files") != std::string::npos,
+        "binary change is reported as binary");
+}
+
 static void test_persistence(const std::string& root)
 {
     std::string dir = root + "\\app data \xC3\xBC\\"; // "ü"
@@ -405,6 +438,7 @@ int main()
     test_ahead_behind(root);
     test_conflict(root);
     test_commit_paths(root);
+    test_diff(root);
     test_persistence(root);
 
     delete_tree(root);

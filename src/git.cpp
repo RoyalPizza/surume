@@ -22,6 +22,7 @@ constexpr int ORDINARY_FIELDS = 8;  // "1 XY sub mH mI mW hH hI path"
 constexpr int RENAME_FIELDS = 9;    // "2 XY sub mH mI mW hH hI Xscore path"
 constexpr int UNMERGED_FIELDS = 10; // "u XY sub m1 m2 m3 mW h1 h2 h3 path"
 constexpr DWORD RESOLVED_PATH_SIZE = 32768; // longest Windows path
+constexpr const char* EMPTY_TREE_HASH = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 // Convert UTF-8 to a null-terminated UTF-16 buffer for Win32 W functions.
 static std::vector<wchar_t> to_wide(const std::string& text)
@@ -721,23 +722,24 @@ bool git_get_diff(const std::string& repo_path, const FileStatus& file, std::str
         return true;
     }
 
-    if (file.index_status != ' ')
+    // Working tree against HEAD: staged and unstaged changes together, which is what a
+    // checkbox commit records. A rename passes both paths so it shows as one.
+    std::vector<std::string> args = { "--literal-pathspecs", "diff", "-M", "HEAD", "--",
+        file.path };
+    if (!file.old_path.empty())
     {
-        if (git_run(repo_path, { "diff", "--cached", "--", file.path }, result) &&
-            !result.output.empty())
-        {
-            diff = result.output;
-            return true;
-        }
+        args.push_back(file.old_path);
     }
-
-    if (file.worktree_status != ' ')
+    if (!git_run(repo_path, args, result))
     {
-        if (git_run(repo_path, { "diff", "--", file.path }, result) && !result.output.empty())
-        {
-            diff = result.output;
-            return true;
-        }
+        // No HEAD yet: compare with the empty tree instead
+        args[3] = EMPTY_TREE_HASH;
+        git_run(repo_path, args, result);
+    }
+    if (result.exit_code == 0 && !result.output.empty())
+    {
+        diff = result.output;
+        return true;
     }
 
     LOG_WARN("git_get_diff produced no output for '%s' (exit=%d err='%s')",
