@@ -22,11 +22,11 @@ Nothing queued. Pick from the v1 features and bugs below.
 
 ### Git (`git.cpp`)
 
-- [ ] G1 **8.3 short paths and `subst` drives are rejected.** `git_get_repo_root` compares the chosen path to Git's long-form top-level path as text, so a path like `C:\Users\ROYALP~1\repo` fails. The folder picker returns long paths, so this only affects paths typed or restored from elsewhere. Normalize with `GetLongPathNameW` or `GetFinalPathNameByHandleW` first.
+- [x] G1 **8.3 short paths and `subst` drives are rejected.** `git_get_repo_root` compares the chosen path to Git's long-form top-level path as text, so a path like `C:\Users\ROYALP~1\repo` fails. The folder picker returns long paths, so this only affects paths typed or restored from elsewhere. Normalize with `GetLongPathNameW` or `GetFinalPathNameByHandleW` first.
 - [ ] G2 **Diffs show only the staged part** of a file that has both staged and unstaged changes.
 - [ ] G3 **Commit failure shows an empty reason.** With nothing staged, Git writes "nothing to commit" to stdout, not stderr.
 - [ ] G4 **Conflicts look like modifications.** Unmerged files (`UU`, `AA`, ...) get the yellow `M` badge. v1 minimum: a distinct conflicted badge and a message saying the merge must be finished in an editor or terminal.
-- [ ] G5 **`checkout <name>` is ambiguous** if a branch and a file share a name. Use `git switch`.
+- [x] G5 **`checkout <name>` is ambiguous** if a branch and a file share a name. Use `git switch`.
 
 ### GUI (`gui.cpp`)
 

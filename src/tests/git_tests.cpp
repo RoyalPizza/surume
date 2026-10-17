@@ -142,6 +142,17 @@ static void test_repo_root(const std::string& root)
     make_directory(sub);
     check(!git_get_repo_root(sub, found_root), "subfolder of a repo is rejected");
     check(!git_get_repo_root(root, found_root), "folder outside any repo is rejected");
+
+    // 8.3 short names exist only if the volume generates them
+    wchar_t short_path[WIDE_PATH_SIZE] = {};
+    GetShortPathNameW(to_wide(repo).data(), short_path, WIDE_PATH_SIZE);
+    std::string short_repo = to_utf8(short_path);
+    if (short_repo.empty() || short_repo == repo)
+    {
+        printf("SKIP  8.3 short path (volume has no short names)\n");
+        return;
+    }
+    check(git_get_repo_root(short_repo, found_root), "repo opened by its 8.3 short path");
 }
 
 static void test_commit_message(const std::string& root)
@@ -233,6 +244,13 @@ static void test_branches_and_log(const std::string& root)
 
     check(git_checkout_branch(repo, "main", false, result), "checkout main");
     check(git_delete_branch(repo, "feature/x", result), "delete merged branch");
+
+    // A branch named like a tracked file must switch branches, not restore the file
+    check(git_create_branch(repo, "a.txt", result), "create branch named like a file");
+    check(git_checkout_branch(repo, "main", false, result) &&
+        git_checkout_branch(repo, "a.txt", false, result) &&
+        git_get_current_branch(repo, branch) && branch == "a.txt",
+        "switch to a branch named like a file");
 }
 
 static void test_persistence(const std::string& root)

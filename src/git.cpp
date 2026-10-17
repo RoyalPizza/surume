@@ -17,6 +17,7 @@ constexpr DWORD PIPE_READ_SIZE = 4096;
 constexpr int MAX_LOG_COMMITS = 100;
 constexpr char LOG_FIELD_SEPARATOR = '\x1f';
 constexpr size_t STATUS_PATH_OFFSET = 3; // "XY path"
+constexpr DWORD RESOLVED_PATH_SIZE = 32768; // longest Windows path
 
 // Convert UTF-8 to a null-terminated UTF-16 buffer for Win32 W functions.
 static std::vector<wchar_t> to_wide(const std::string& text)
@@ -90,6 +91,55 @@ static std::string trim_end(std::string text)
         text.pop_back();
     }
     return text;
+}
+
+static std::string to_utf8(const wchar_t* text)
+{
+    int len = WideCharToMultiByte(CP_UTF8, 0, text, -1, nullptr, 0, nullptr, nullptr);
+    if (len <= 1)
+    {
+        return "";
+    }
+
+    std::string utf8(len, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, text, -1, utf8.data(), len, nullptr, nullptr);
+    utf8.pop_back(); // terminator
+    return utf8;
+}
+
+// Resolve 8.3 short names, subst drives and symlinks to the real long path, so two spellings
+// of one folder compare equal. Returns path unchanged if it can't be opened.
+static std::string resolve_path(const std::string& path)
+{
+    std::vector<wchar_t> wide_path = to_wide(path);
+    HANDLE handle = CreateFileW(wide_path.data(), 0,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (handle == INVALID_HANDLE_VALUE)
+    {
+        return path;
+    }
+
+    std::vector<wchar_t> final_path(RESOLVED_PATH_SIZE, L'\0');
+    DWORD len = GetFinalPathNameByHandleW(handle, final_path.data(), RESOLVED_PATH_SIZE,
+        FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+    CloseHandle(handle);
+    if (len == 0 || len >= RESOLVED_PATH_SIZE)
+    {
+        return path;
+    }
+
+    // Strip the \\?\ prefix GetFinalPathNameByHandle adds
+    const wchar_t* start = final_path.data();
+    if (wcsncmp(start, L"\\\\?\\UNC\\", 8) == 0)
+    {
+        return "\\\\" + to_utf8(start + 8);
+    }
+    if (wcsncmp(start, L"\\\\?\\", 4) == 0)
+    {
+        start += 4;
+    }
+    return to_utf8(start);
 }
 
 static std::string to_backslashes(std::string path)
@@ -249,8 +299,14 @@ bool git_get_repo_root(const std::string& path, std::string& root)
         return false;
     }
 
+    // Resolve before trimming slashes: "C:" alone means the current directory on drive C
     std::string top_level = to_backslashes(trim_end(result.output));
-    std::string normalized_path = to_backslashes(path);
+    std::string resolved_top_level = to_backslashes(resolve_path(top_level));
+    std::string normalized_path = to_backslashes(resolve_path(path));
+    while (!resolved_top_level.empty() && resolved_top_level.back() == '\\')
+    {
+        resolved_top_level.pop_back();
+    }
     while (!top_level.empty() && top_level.back() == '\\')
     {
         top_level.pop_back();
@@ -260,7 +316,7 @@ bool git_get_repo_root(const std::string& path, std::string& root)
         normalized_path.pop_back();
     }
 
-    if (_stricmp(top_level.c_str(), normalized_path.c_str()) != 0)
+    if (_stricmp(resolved_top_level.c_str(), normalized_path.c_str()) != 0)
     {
         LOG_WARN("git_get_repo_root: '%s' is a subfolder of '%s'",
             normalized_path.c_str(), top_level.c_str());
@@ -367,19 +423,19 @@ bool git_checkout_branch(const std::string& repo_path, const std::string& name,
 {
     if (!is_remote)
     {
-        return git_run(repo_path, { "checkout", name }, result);
+        return git_run(repo_path, { "switch", name }, result);
     }
 
     // "origin/feature/x" becomes local "feature/x" tracking the remote branch
     size_t slash = name.find('/');
     std::string local_name = slash != std::string::npos ? name.substr(slash + 1) : name;
-    return git_run(repo_path, { "checkout", "-b", local_name, "--track", name }, result);
+    return git_run(repo_path, { "switch", "-c", local_name, "--track", name }, result);
 }
 
 bool git_create_branch(const std::string& repo_path, const std::string& name,
     GitResult& result)
 {
-    return git_run(repo_path, { "checkout", "-b", name }, result);
+    return git_run(repo_path, { "switch", "-c", name }, result);
 }
 
 bool git_delete_branch(const std::string& repo_path, const std::string& name,
