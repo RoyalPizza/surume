@@ -31,7 +31,7 @@ Nothing queued. Pick from the v1 features and bugs below.
 ### GUI (`gui.cpp`)
 
 - [ ] U1 **View > Changes / History does nothing.** It sets `state.nav_mode`, but the tab bar never reads it.
-- [ ] U2 **File > Exit does nothing.**
+- [x] U2 **File > Exit does nothing.**
 - [ ] U3 **Commit button is enabled when nothing is staged.**
 - [ ] U4 **Missing Git isn't handled.** `is_git_found` is never checked by the GUI: no error is shown and repo actions stay enabled.
 - [ ] U5 **Large diffs are slow.** `render_diff` draws every line every frame; use `ImGuiListClipper`.
@@ -41,9 +41,9 @@ Nothing queued. Pick from the v1 features and bugs below.
 ### App (`main.cpp`, `persistence.cpp`)
 
 - [ ] A1 **Settings aren't saved for non-ASCII Windows usernames.** `fopen_s` and `toml_parse_file_ex` take ANSI paths. Use wide-char file APIs.
-- [ ] A2 **Likely spins the CPU while minimized.** `Present(1, 0)` returns immediately when occluded; check for `DXGI_STATUS_OCCLUDED` and sleep, like the ImGui example does.
-- [ ] A3 **`window_shutdown` destroys an already-destroyed window** (harmless, but wrong).
-- [ ] A4 **`imgui.ini` is written to the working directory.** The app owns its layout, so set `io.IniFilename = nullptr` and drop the `.gitignore` entry.
+- [x] A2 **Likely spins the CPU while minimized.** `Present(1, 0)` returns immediately when occluded; check for `DXGI_STATUS_OCCLUDED` and sleep, like the ImGui example does.
+- [x] A3 **`window_shutdown` destroys an already-destroyed window** (harmless, but wrong).
+- [x] A4 **`imgui.ini` is written to the working directory.** The app owns its layout, so set `io.IniFilename = nullptr` and drop the `.gitignore` entry.
 
 ## Features: v1
 
@@ -79,12 +79,12 @@ Nothing queued. Pick from the v1 features and bugs below.
 
 - [ ] I1 High-DPI support (`ImGui_ImplWin32_EnableDpiAwareness` or a manifest); the window is blurry on scaled displays.
 - [ ] I2 Load a TTF font with wider glyph coverage so non-ASCII file names don't render as `?`.
-- [ ] I3 Add `/utf-8` to `build.bat`; `gui.cpp` contains UTF-8 characters.
+- [x] I3 Add `/utf-8` to `build.bat`; `gui.cpp` contains UTF-8 characters.
 - [ ] I4 Only redraw when something changes instead of rendering at 60 fps while idle.
 - [ ] I5 Save settings when they change, not only on a clean exit.
 - [ ] I6 Stop the GUI calling Git directly; route actions through request flags handled in `main.cpp`, like Open Repository. Part of F12.
-- [ ] I7 Clean up `.gitignore`: drop the leftover CMake, Visual Studio project, compiler output and `*.log` entries.
-- [ ] I8 Add a `compile_flags.txt` so clangd in VS Code finds the ImGui and tomlc17 headers.
+- [x] I7 Clean up `.gitignore`: drop the leftover CMake, Visual Studio project, compiler output and `*.log` entries.
+- [x] I8 Add a `compile_flags.txt` so clangd in VS Code finds the ImGui and tomlc17 headers.
 
 ## Done
 

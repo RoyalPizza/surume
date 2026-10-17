@@ -35,6 +35,7 @@ constexpr INT_PTR SHELL_EXECUTE_SUCCESS_MIN = 32; // ShellExecute returns > 32 o
 constexpr const wchar_t* WINDOW_CLASS_NAME = L"SurumeWnd";
 constexpr int TERMINAL_ARGS_SIZE = MAX_PATH * 2;
 constexpr WORD APP_ICON_ID = 1; // ICON resource in surume.rc
+constexpr DWORD OCCLUDED_SLEEP_MILLISECONDS = 10;
 
 struct Window
 {
@@ -46,6 +47,7 @@ struct Window
     int width = INITIAL_WIDTH;
     int height = INITIAL_HEIGHT;
     bool is_quit_requested = false;
+    bool is_occluded = false; // minimized or fully covered; skip rendering
     bool has_pending_resize = false;
     int pending_width = 0;
     int pending_height = 0;
@@ -84,8 +86,12 @@ static LRESULT WINAPI window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
             }
             break;
 
+        case WM_CLOSE:
+            // Leave the main loop; window_shutdown destroys the window after D3D is released
+            main_window.is_quit_requested = true;
+            return 0;
+
         case WM_DESTROY:
-            LOG_INFO("WM_DESTROY received");
             PostQuitMessage(0);
             return 0;
     }
@@ -268,10 +274,28 @@ static void present(Window& window)
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 
     HRESULT hr = window.swap_chain->Present(1, 0);
+    window.is_occluded = hr == DXGI_STATUS_OCCLUDED;
     if (FAILED(hr))
     {
         LOG_ERROR("Present failed: HRESULT 0x%08X", (unsigned)hr);
     }
+}
+
+// While minimized, Present returns immediately instead of waiting for vsync, so the loop
+// would spin. Returns true if the window is still occluded and this frame should be skipped.
+static bool is_still_occluded(Window& window)
+{
+    if (!window.is_occluded)
+    {
+        return false;
+    }
+    if (window.swap_chain->Present(0, DXGI_PRESENT_TEST) == DXGI_STATUS_OCCLUDED)
+    {
+        Sleep(OCCLUDED_SLEEP_MILLISECONDS);
+        return true;
+    }
+    window.is_occluded = false;
+    return false;
 }
 
 static void window_shutdown(Window& window)
@@ -505,6 +529,12 @@ static void handle_requests(AppState& state, Window& window)
         }
     }
 
+    if (state.is_exit_requested)
+    {
+        state.is_exit_requested = false;
+        window.is_quit_requested = true;
+    }
+
     if (state.is_open_in_explorer_requested)
     {
         state.is_open_in_explorer_requested = false;
@@ -559,6 +589,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         if (main_window.is_quit_requested)
         {
             break;
+        }
+        if (is_still_occluded(main_window))
+        {
+            continue;
         }
 
         handle_resize(main_window);

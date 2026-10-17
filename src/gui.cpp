@@ -392,7 +392,7 @@ static void render_file_menu(AppState& state)
     ImGui::Separator();
     if (ImGui::MenuItem("Exit", "Alt+F4"))
     {
-        LOG_INFO("Menu: File > Exit (not implemented)");
+        state.is_exit_requested = true;
     }
     ImGui::EndMenu();
 }
