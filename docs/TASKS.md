@@ -53,7 +53,7 @@ Nothing queued. Pick from the v1 features and bugs below.
 - [ ] F4 Auto-fetch (settings exist but are unused).
 - [x] F5 Repo refresh when the window regains focus, and on F5. The file list is stale until the app runs a Git action.
 - [ ] F6 History: commit details and changed files.
-- [ ] F7 Changed-file path filter.
+- [x] F7 Changed-file path filter.
 - [x] F8 Branch state markers (local / remote / tracking all render the same).
 - [ ] F9 Remove a repository from the recent list; repository health warnings.
 - [x] F10 Binary and large-file diff placeholders.

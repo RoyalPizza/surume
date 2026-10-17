@@ -336,7 +336,6 @@ static bool window_init(Window& window, const wchar_t* title)
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.IniFilename = nullptr; // layout is app-owned and persisted in settings.toml
     apply_dpi_scale(window.dpi_scale);
     load_fonts();

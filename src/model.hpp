@@ -6,6 +6,7 @@
 
 constexpr int COMMIT_SUMMARY_SIZE = 256;
 constexpr int COMMIT_DESCRIPTION_SIZE = 16384;
+constexpr int FILE_FILTER_SIZE = 256;
 
 enum class NavMode
 {
@@ -132,6 +133,7 @@ struct AppState
 
     // View
     NavMode nav_mode = NavMode::CHANGES;
+    char file_filter[FILE_FILTER_SIZE] = {}; // case-insensitive path filter for the file list
     std::string selected_file_path; // empty when no file is selected
     std::string current_diff;       // diff of selected_file_path, once loaded
     std::vector<DiffLine> diff_lines; // current_diff split and classified

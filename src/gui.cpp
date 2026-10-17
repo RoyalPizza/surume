@@ -94,6 +94,8 @@ static bool settings_is_auto_fetch_enabled = false;
 static int settings_auto_fetch_minutes = 15;
 static bool is_settings_loaded = false;
 static NavMode shown_nav_mode = NavMode::CHANGES;
+static bool should_scroll_to_selection = false; // set by arrow keys; the row scrolls into view
+static std::vector<int> visible_files;          // filtered file indices, rebuilt every frame
 static bool is_first_frame = true;
 
 // Pixel sizes above are for 96 DPI; scale them for the current monitor.
@@ -788,6 +790,47 @@ struct FileRowLayout
     float path_width = 0.0f;
 };
 
+// Case-insensitive (ASCII) substring match; an empty filter matches everything.
+static bool matches_filter(const std::string& path, const char* filter)
+{
+    if (filter[0] == '\0')
+    {
+        return true;
+    }
+
+    size_t filter_len = strlen(filter);
+    for (size_t start = 0; start + filter_len <= path.size(); ++start)
+    {
+        if (_strnicmp(path.c_str() + start, filter, filter_len) == 0)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Indices into state.repo.files of the files the filter shows.
+static void filtered_files(const AppState& state, std::vector<int>& indices)
+{
+    indices.clear();
+    for (int i = 0; i < (int)state.repo.files.size(); ++i)
+    {
+        if (matches_filter(state.repo.files[i].path, state.file_filter))
+        {
+            indices.push_back(i);
+        }
+    }
+}
+
+static void select_file(AppState& state, const FileStatus& file)
+{
+    state.selected_file_path = file.path;
+    state.current_diff.clear();
+    state.diff_lines.clear();
+    state.is_large_diff_confirmed = false;
+    request(state, RequestKind::LOAD_DIFF);
+}
+
 static void render_file_row(AppState& state, int index, const FileRowLayout& layout)
 {
     const FileStatus& file = state.repo.files[index];
@@ -826,11 +869,12 @@ static void render_file_row(AppState& state, int index, const FileRowLayout& lay
     if (ImGui::Selectable(display_path.c_str(), is_selected, ImGuiSelectableFlags_None,
         row_size) && !is_selected)
     {
-        state.selected_file_path = file.path;
-        state.current_diff.clear();
-        state.diff_lines.clear();
-        state.is_large_diff_confirmed = false;
-        request(state, RequestKind::LOAD_DIFF);
+        select_file(state, file);
+    }
+    if (is_selected && should_scroll_to_selection)
+    {
+        ImGui::SetScrollHereY();
+        should_scroll_to_selection = false;
     }
     if (!file.old_path.empty() && ImGui::IsItemHovered())
     {
@@ -839,30 +883,87 @@ static void render_file_row(AppState& state, int index, const FileRowLayout& lay
 }
 
 // Tick-all checkbox (mixed when only some files are ticked) and the file count.
+// Tick-all checkbox for the visible files (mixed when only some are ticked), and the count.
 static void render_tick_all(AppState& state)
 {
     int total = (int)state.repo.files.size();
-    int ticked = count_ticked(state);
-    bool is_mixed = ticked > 0 && ticked < total;
-    bool is_all = ticked == total;
+    int visible = (int)visible_files.size();
+    int ticked = 0;
+    for (int index : visible_files)
+    {
+        ticked += is_ticked(state, state.repo.files[index]) ? 1 : 0;
+    }
+    bool is_mixed = ticked > 0 && ticked < visible;
+    bool is_all = visible > 0 && ticked == visible;
 
+    ImGui::BeginDisabled(visible == 0);
     ImGui::PushItemFlag(ImGuiItemFlags_MixedValue, is_mixed);
     if (ImGui::Checkbox("##tickall", &is_all))
     {
-        state.unticked_paths.clear();
-        if (!is_all)
+        for (int index : visible_files)
         {
-            for (const FileStatus& file : state.repo.files)
+            const std::string& path = state.repo.files[index].path;
+            if (is_all)
             {
-                state.unticked_paths[file.path] = true;
+                state.unticked_paths.erase(path);
+            }
+            else
+            {
+                state.unticked_paths[path] = true;
             }
         }
     }
     ImGui::PopItemFlag();
+    ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::AlignTextToFramePadding();
-    ImGui::TextDisabled("%d changed file%s", total, total == 1 ? "" : "s");
+    if (visible == total)
+    {
+        ImGui::TextDisabled("%d changed file%s", total, total == 1 ? "" : "s");
+    }
+    else
+    {
+        ImGui::TextDisabled("%d of %d changed files", visible, total);
+    }
     ImGui::Separator();
+}
+
+// Up/Down move the selection through the visible files when no text field has focus.
+static void handle_file_list_keys(AppState& state)
+{
+    if (ImGui::GetIO().WantTextInput || visible_files.empty())
+    {
+        return;
+    }
+
+    int step = 0;
+    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow))
+    {
+        step = 1;
+    }
+    else if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))
+    {
+        step = -1;
+    }
+    if (step == 0)
+    {
+        return;
+    }
+
+    int current = -1;
+    for (int i = 0; i < (int)visible_files.size(); ++i)
+    {
+        if (state.repo.files[visible_files[i]].path == state.selected_file_path)
+        {
+            current = i;
+        }
+    }
+    int next = current < 0 ? 0 : std::clamp(current + step, 0, (int)visible_files.size() - 1);
+    if (next != current)
+    {
+        select_file(state, state.repo.files[visible_files[next]]);
+        should_scroll_to_selection = true;
+    }
 }
 
 // Conflicts block normal work until resolved, so say so above the list.
@@ -895,21 +996,39 @@ static void render_file_list(AppState& state)
     }
     render_conflict_banner(state);
 
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::InputTextWithHint("##filter", "Filter files", state.file_filter,
+        sizeof(state.file_filter));
+    filtered_files(state, visible_files);
+    handle_file_list_keys(state);
     render_tick_all(state);
+    if (visible_files.empty())
+    {
+        ImGui::TextDisabled("No files match the filter");
+        return;
+    }
 
     const ImGuiStyle& style = ImGui::GetStyle();
     FileRowLayout layout;
     layout.badge_x = ImGui::GetCursorPosX() + ImGui::GetFrameHeight() + style.ItemSpacing.x;
     layout.path_x = layout.badge_x + ImGui::CalcTextSize("M").x + style.ItemSpacing.x * 2;
     layout.path_width = ImGui::GetContentRegionAvail().x - layout.path_x;
+
     ImGuiListClipper clipper;
-    clipper.Begin((int)state.repo.files.size());
+    clipper.Begin((int)visible_files.size());
+    for (int i = 0; i < (int)visible_files.size() && should_scroll_to_selection; ++i)
+    {
+        if (state.repo.files[visible_files[i]].path == state.selected_file_path)
+        {
+            clipper.IncludeItemByIndex(i); // so the selected row exists to scroll to
+        }
+    }
     while (clipper.Step())
     {
         for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i)
         {
-            ImGui::PushID(i);
-            render_file_row(state, i, layout);
+            ImGui::PushID(visible_files[i]);
+            render_file_row(state, visible_files[i], layout);
             ImGui::PopID();
         }
     }
