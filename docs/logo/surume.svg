@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- Back tentacles (darker) -->
+  <g fill="none" stroke="#C85A0C" stroke-width="22" stroke-linecap="round">
+    <path d="M100 150 C 92 180, 70 196, 74 222 C 77 238, 98 236, 96 222"/>
+    <path d="M156 150 C 164 180, 186 196, 182 222 C 179 238, 158 236, 160 222"/>
+  </g>
+  <!-- Front tentacles -->
+  <g fill="none" stroke="#F07F1E" stroke-width="24" stroke-linecap="round">
+    <path d="M78 138 C 50 150, 30 170, 36 196 C 40 214, 64 212, 62 196"/>
+    <path d="M178 138 C 206 150, 226 170, 220 196 C 216 214, 192 212, 194 196"/>
+    <path d="M118 152 C 114 184, 106 204, 116 226 C 122 238, 140 234, 136 220"/>
+    <path d="M138 152 C 142 178, 152 190, 150 206"/>
+  </g>
+  <!-- Head -->
+  <path d="M60 140 C 52 82, 86 30, 128 30 C 170 30, 204 82, 196 140 C 186 162, 70 162, 60 140 Z" fill="#F7922F"/>
+  <!-- Head shading and spots -->
+  <path d="M60 140 C 70 162, 186 162, 196 140 C 192 150, 64 150, 60 140 Z" fill="#D96B12"/>
+  <ellipse cx="96" cy="62" rx="16" ry="10" fill="#FFB866" transform="rotate(-30 96 62)"/>
+  <circle cx="160" cy="58" r="6" fill="#FFB866"/>
+  <circle cx="174" cy="76" r="4" fill="#FFB866"/>
+  <!-- Eyes -->
+  <ellipse cx="102" cy="108" rx="20" ry="22" fill="#FFFFFF"/>
+  <ellipse cx="154" cy="108" rx="20" ry="22" fill="#FFFFFF"/>
+  <circle cx="106" cy="112" r="11" fill="#1B1B1B"/>
+  <circle cx="158" cy="112" r="11" fill="#1B1B1B"/>
+  <circle cx="110" cy="107" r="4" fill="#FFFFFF"/>
+  <circle cx="162" cy="107" r="4" fill="#FFFFFF"/>
+  <!-- Cheeks -->
+  <ellipse cx="80" cy="134" rx="9" ry="5" fill="#E8603C" opacity="0.7"/>
+  <ellipse cx="176" cy="134" rx="9" ry="5" fill="#E8603C" opacity="0.7"/>
+</svg>

@@ -1,10 +1,12 @@
 # Surume
 
+<img src="docs/logo/surume.png" alt="Surume logo: an orange kraken" width="128">
+
 A native Windows Git client in the spirit of GitHub Desktop, written in C++ with [Dear ImGui](https://github.com/ocornut/imgui). Named after the giant kraken from One Piece.
 
 ## Status
 
-Early and mid-redesign. The current code is the old Gitaluna codebase: it can open repositories, show changes and diffs, commit, switch/create/delete branches, and list history. Staging, sync (fetch/pull/push), and background Git operations are not done yet. See [docs/DESIGN.md](docs/DESIGN.md#current-status) for the full breakdown and [docs/TASKS.md](docs/TASKS.md) for what's next.
+Early. The design is set: a GitHub Desktop-style client whose focus is speed (instant startup, low memory, never blocking the UI). The current code can open repositories, show changes and diffs, commit, switch/create/delete branches, and list history. Commit selection, sync (fetch/pull/push), and background Git operations are not done yet. See [docs/DESIGN.md](docs/DESIGN.md#current-status) for the full breakdown and [docs/TASKS.md](docs/TASKS.md) for what's next.
 
 ## Requirements
 
@@ -41,7 +43,7 @@ Debug builds write a log to `%APPDATA%\Surume\surume_debug.log`. Settings and re
 
 ```
 src/          application code
-docs/         design, architecture, and task docs
+docs/         design, architecture, and task docs; logo/ holds the logo and concepts
 third-party/  Dear ImGui and tomlc17 (git submodules)
 bin/          build output: executable only
 obj/          build output: intermediate files

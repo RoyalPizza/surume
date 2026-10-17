@@ -1,220 +1,159 @@
 # Surume Architecture
 
-## Language and UI
+## Language and Platform
 
-- C++20 or newer.
-- Dear ImGui for immediate-mode UI.
-- Windows v1 uses a native Win32 window with Dear ImGui's Win32 + Direct3D 11 backend.
-- Windows only. There are no plans for other platforms at the moment, so Win32 code lives directly in `main.cpp` with no platform abstraction layer.
-- No build system: a plain `build.bat` calls MSVC `cl` directly.
+- C++20, MSVC, built by a plain `build.bat` (no build system).
+- Dear ImGui with the Win32 + Direct3D 11 backends.
+- Windows 10 and 11 only. No other platforms are planned, so Win32 code lives directly in `main.cpp` with no platform abstraction layer.
+- Third-party code: Dear ImGui and tomlc17 (git submodules). Nothing else without a deliberate decision.
 
 ## Engineering Principles
 
-- Follow `dev-standards/cpp/cpp.md` (C-style C++: plain structs, free functions with module prefixes such as `git_get_status`, snake_case, Allman braces, no lambdas or member functions, failures returned as `bool` with out parameters, `/W4 /WX`). Project overrides: `.hpp` headers, build output in `bin/` and `obj/`.
+- Follow `dev-standards/cpp/cpp.md`: C-style C++ with plain structs and free functions, module prefixes (`git_get_status`), snake_case, Allman braces, no lambdas or member functions, failures returned as `bool` with out parameters, `/W4 /WX`. Project overrides: `.hpp` headers, build output in `bin/` and `obj/`.
+- **Performance is a feature.** Design against the targets in `DESIGN.md`. Nothing slow runs on the UI thread, nothing is drawn that isn't visible, and nothing is redrawn when nothing changed.
 - Prefer code that is easy to step through in a debugger.
-- Keep modules split by responsibility without building a deep framework layer.
-- Keep Dear ImGui panel code close to the state and operations it edits.
-- Use a central application state struct for selected repository, branch, file, commit, active jobs, settings, and transient UI state.
-- Use Dear ImGui directly instead of wrapping it in a custom UI framework too early.
-- Use fixed, application-owned resizable panels instead of dockable windows for v1.
-- Save splitter sizes and panel preferences as app settings.
-- Use vanilla Dear ImGui styling for v1. Do not add custom theming yet.
-- Use ImGui style colors and widgets where practical, with hardcoded colors reserved for semantic Git states such as added, deleted, modified, and conflicted.
-- Use icon buttons with tooltips for repeated toolbar-style actions such as refresh, fetch, pull, push, stage, unstage, branch, and settings.
-- Prefer conservative dependencies and avoid adding a library for behavior that can be implemented simply.
-- Prefer shipping as a single executable when practical.
-- Embed small required assets, such as icon fonts, at build time when practical.
-- Store app preferences under the user's platform app-data folder rather than inside repositories.
-- Keep comments short and useful, focused on intent, constraints, or non-obvious behavior.
-- Avoid expensive work in the per-frame UI path; cache repository state and run Git work in background jobs.
-- Use machine-readable external command output whenever possible instead of parsing human-oriented text.
+- Keep modules split by responsibility without a framework layer. Use Dear ImGui directly.
+- Fixed, application-owned panels; no docking. Vanilla ImGui styling, with hardcoded colors only for semantic Git states.
+- Prefer machine-readable Git output (`--porcelain`, `-z`, `--format`) over parsing human-oriented text.
+- Store preferences under `%APPDATA%\Surume`, never inside repositories. Never store credentials; rely on Git's credential helpers.
+- Ship a single executable. Embed small assets (fonts, icon) at build time.
 
-## Git Backend
+## Modules
 
-There are two viable backend paths:
+- `main.cpp`: entry point and everything Windows-specific: window, D3D11 and ImGui backend setup, the frame loop, folder dialog, Explorer/terminal launch, app-data path. Also app startup and shutdown, and handling of requests from the GUI after each frame.
+- `gui`: all Dear ImGui drawing. Reads `AppState` and records requests; never runs Git. Entry point `gui_render`.
+- `git`: runs Git (`git_run`) and parses its output into the types in `model.hpp`. Pure functions of a repository path; no knowledge of the GUI or jobs.
+- `jobs` (planned): the worker thread and job queue. Turns requests into `git` calls off the UI thread and hands results back.
+- `model`: header-only data types and `AppState`.
+- `persistence`: `settings.toml` and `repositories.toml` via tomlc17.
+- `log`: debug-only log file (`SURUME_DEBUG`). User-visible results go through `AppState::status_message`.
 
-1. Shell out to the installed `git` executable.
-2. Use `libgit2` for direct repository access.
+## Frame Loop
 
-The recommended first implementation is shelling out to `git`.
+```
+wait for input or a job result (MsgWaitForMultipleObjects)
+pump window messages
+apply finished job results to AppState
+gui_render(state)        -- draws, records requests
+present
+handle requests          -- enqueue jobs, open dialogs
+```
 
-Reasons:
-
-- Matches command-line Git behavior closely.
-- Avoids early dependency complexity.
-- Handles credential helpers and host-specific auth flows through the user's existing Git setup.
-- Lets the app mature its UI and workflow model before committing to a deeper Git abstraction.
-
-The Git layer should still be isolated behind a service boundary so that selected operations can move to `libgit2` later if useful.
-
-The first version requires an installed `git` executable. Surume should detect Git at startup or before the first Git-backed action, show a clear missing-Git error, and avoid repository actions that cannot run without Git.
-
-## Major Modules
-
-- `main.cpp`: entry point and everything Windows-specific. Win32 window, D3D11 and ImGui backend setup, frame present, the folder dialog, Open in Explorer/Terminal, and the app-data path. Also app startup (Git detection, loading persistence, restoring the last repository), the main loop, shutdown, and deferred requests from the UI (open repository, open in Explorer/Terminal, repository switch, diff load), handled after each frame is presented.
-- `gui`: Dear ImGui screens, panels, dialogs, and layout. Entry point `gui_render`.
-- `git`: Git command execution (`git_run`) and parsing for status, diff, branches, commits, and log, plus `git_refresh_repo_state` to reload all of it into `AppState`. Sync operations are not implemented yet.
-- `model`: header-only. The central `AppState` struct and the plain data types it holds.
-- `jobs`: background task queue for Git operations. Not implemented yet.
-- `persistence`: recent repositories, panel layout, user preferences. Serialization via TOML using tomlc17.
-- `log`: diagnostic log file, compiled in only for debug builds (`SURUME_DEBUG`). User-visible operation results go through `AppState::status_message`.
-
-## Git Command Execution
-
-Git operations should run through one command runner with:
-
-- Working directory.
-- Argument vector, not shell string interpolation.
-- Timeout support.
-- Captured stdout, stderr, and exit code.
-- Cancellation where practical.
-- Structured result objects.
-- Redaction for credentials or sensitive URLs in logs.
-
-UI code should not directly construct process calls.
-
-Repository validation should use Git rather than filesystem-only checks. The first version should validate opened folders with:
-
-- `git -C <folder> rev-parse --show-toplevel`
-
-The selected folder must match the returned top-level path after path normalization. If Git reports a different top-level path, the selected folder is a subfolder and should be rejected. This keeps v1 strict: users open repository roots only.
-
-The first version should implement the full core GitHub Desktop-style local workflow: current branch, working tree status, changed file list, diff viewing, staging, committing, branch switching/creation, history, fetch, pull, push, and ahead/behind state.
-
-## Application State
-
-The app keeps a central state object containing:
-
-- Open repositories.
-- Active repository.
-- Active branch.
-- Active upstream remote and branch when one exists.
-- Repository status snapshot.
-- Selected navigation mode.
-- Selected file.
-- Selected commit.
-- In-flight jobs.
-- Last operation messages.
-- User preferences.
-
-Repository state should be refreshed after mutating operations such as stage, unstage, commit, checkout, pull, and push.
+The loop blocks until there is something to do, so an idle Surume uses no CPU or GPU. The worker wakes the UI thread when a result is ready. Animations or progress indicators request continuous frames only while they are visible.
 
 ## Background Jobs
 
-All potentially slow operations run outside the UI frame:
+All Git work runs on **one worker thread** that executes jobs from a queue, one at a time. One thread is enough: Git serializes index changes with `index.lock` anyway, and a single queue keeps ordering obvious and debugging simple.
 
-- Repository status scan.
-- Diff generation.
-- Fetch, pull, and push.
-- Commit history loading.
-- Branch listing.
+```
+UI thread                          worker thread
+---------                          -------------
+gui records request
+handle_requests: push Job  ----->  pop Job
+show busy state                    run git commands
+                                   push JobResult
+                           <-----  wake UI thread
+apply JobResult to AppState
+```
 
-The UI displays progress and stale-state indicators while jobs are active.
+Design:
 
-Current code: there is no job system yet. Every Git call runs synchronously, on the UI thread, with a hardcoded 15 second timeout. Some calls happen from UI code mid-frame (checkout, branch create/delete, commit), and others are deferred to the main loop.
+- **Threads and locks are Win32 primitives** (`CreateThread`, `SRWLOCK`, `CONDITION_VARIABLE`). The standard allows neither `std::thread` nor `std::mutex`.
+- **A job is plain data:** an `enum class JobKind` (`REFRESH`, `LOAD_DIFF`, `COMMIT`, `CHECKOUT`, `FETCH`, `PULL`, `PUSH`, `STASH`, ...), the repository path, and kind-specific inputs (paths, message, patch). The worker dispatches with a `switch` on the kind.
+- **A result is plain data:** the job kind, a success flag, the parsed output (a status snapshot, a diff, a log), and Git's error text. The UI thread applies results; the worker never touches `AppState`.
+- **Stale results are dropped.** Each job carries the repository path and a generation number. If the user switched repositories or a newer refresh was queued, older results are ignored.
+- **Refreshes coalesce.** Queuing a refresh while one is waiting replaces it instead of adding another.
+- **Mutations are exclusive.** While a mutating job (commit, checkout, pull, push, stash, discard) runs, the GUI disables other mutating actions and shows what is running. Read-only views stay usable.
+- **Network jobs can be cancelled.** Cancelling terminates the running `git` process. Only local jobs keep a timeout; fetch, pull, and push run until done or cancelled.
+- **Every mutation ends with a refresh** of status, branches, and log.
 
-## Data Parsing
+## Application State
 
-Prefer machine-readable Git output where available:
+`AppState` is split by who writes it:
 
-- `git status --porcelain=v2 --branch`
-- `git diff --numstat`
-- `git diff --name-status`
-- `git log --format=...`
-- `git branch --format=...`
-- `git rev-parse --abbrev-ref --symbolic-full-name @{u}`
-- `git remote`
+- **Repository snapshot:** branch, branches, upstream and ahead/behind, changed files, commits. Written only by applying refresh results; replaced wholesale, never patched by the GUI.
+- **Commit selection:** checkbox state per path, selected lines per partially ticked file, summary, description, amend flag. Written by the GUI; survives refreshes by matching on path.
+- **View state:** active tab, selected file or commit, loaded diff, filter text, splitter width.
+- **Requests and jobs:** pending requests from the GUI, the running job, and the busy flag.
+- **Settings and recent repositories:** loaded at startup, saved when changed.
 
-Avoid parsing human-oriented output unless no structured form exists.
+## Git Command Execution
 
-Every command runs with `-c core.quotepath=false` so paths stay UTF-8. Current code uses `git status --porcelain -z -u` (porcelain v1, NUL-separated, no `--branch`), `git branch --format=...`, `git branch -r --format=...`, `git log --format=...`, `git symbolic-ref --short HEAD`, and `git diff` / `git diff --cached` / `git diff --no-index`. Upstream, remote, and numstat queries are not used yet.
+Every command goes through `git_run`:
 
-Sync behavior should be based on the current branch's upstream remote when available. If no upstream exists, `origin` is the preferred default for fetch/publish language. If no upstream exists and multiple remotes exist without `origin`, the app should require an explicit remote choice before publishing instead of guessing.
+- Argument vector, quoted with the Windows command-line rules; no shell.
+- `CreateProcessW` with UTF-8 to UTF-16 conversion; output is kept as UTF-8.
+- `-c core.quotepath=false` on every command so paths stay readable UTF-8.
+- Captured stdout, stderr, and exit code in a `GitResult`.
+- Planned: timeout per job kind instead of the fixed 15 seconds; cancellation; redacting credentials from URLs in logs.
+
+Repository validation uses `git rev-parse --show-toplevel`; the chosen folder must equal the returned top level after normalization. Users open repository roots only.
+
+## Git Commands
+
+Current:
+
+- Status: `git status --porcelain -z -u`
+- Branch: `git symbolic-ref --short HEAD`, `git branch --format=...`, `git branch -r --format=...`
+- Log: `git log --format=...` with `%x1f` field separators
+- Diff: `git diff`, `git diff --cached`, `git diff --no-index` for untracked files
+- Commit and branches: `git commit -m`, `git checkout`, `git checkout -b`, `git branch -d`
+
+Planned:
+
+- `git status --porcelain=v2 -z --branch` to get status, branch, upstream, and ahead/behind in **one** process launch instead of several.
+- Commit selection: `git reset -q` (index back to `HEAD`), `git add -A -- <paths>`, `git apply --cached` for partial files, then `git commit`.
+- Discard: `git restore --source=HEAD --staged --worktree -- <paths>`, and deleting untracked files.
+- Stash: `git stash push --include-untracked`, `git stash list`, `git stash show -p`, `git stash pop`, `git stash drop`.
+- Amend: `git commit --amend`; `git log -1 --format=%B` to load the message.
+- Sync: `git fetch`, `git pull`, `git push`, `git push -u <remote> <branch>`, `git remote`.
+- History details: `git show --format=... --name-status` and `git show <commit> -- <path>`.
+
+## Partial Commits
+
+For a partially ticked file, Surume builds a patch from that file's diff against `HEAD`, keeping only the selected changes:
+
+- Selected `+` lines stay; unselected `+` lines are dropped.
+- Selected `-` lines stay; unselected `-` lines become context lines.
+- Hunk headers are recounted to match.
+
+The patch is applied to the freshly reset index with `git apply --cached`. The working tree is never touched.
+
+## Rendering
+
+- The file list, commit list, and diff draw only visible rows (`ImGuiListClipper`).
+- Diffs are split into lines and classified once when loaded, not on every frame.
+- Avoid allocations in the per-frame path: build labels into fixed buffers, not new strings.
+- High-DPI aware, with a TTF font that covers non-ASCII file names.
 
 ## Error Handling
 
-Errors should be shown in plain language with expandable technical details.
-
-Examples:
+Errors are shown in plain language with Git's raw output behind a details toggle:
 
 - "This branch has no upstream branch."
 - "Pull could not complete because there are merge conflicts."
 - "Authentication failed while contacting the remote."
 - "Git is not installed or could not be found."
 
-The raw Git stderr can be shown behind a details disclosure for diagnosis.
-
 ## Persistence
 
-Persist locally under the user's platform app-data folder using TOML (tomlc17). The app-data folder name is `Surume`; on Windows this resolves to `%APPDATA%\Surume`.
+Two TOML files in `%APPDATA%\Surume`:
 
-Repository history and general settings are stored in separate files:
+- `settings.toml`: `left_column_width`, `git_path`, `default_open_dir`, `auto_fetch_enabled`, `auto_fetch_interval_min`.
+- `repositories.toml`: `repos` (recent list) and `active` (last active repository).
 
-- `settings.toml`
-- `repositories.toml`
-
-The settings file stores:
-
-- Left column width (`left_column_width`).
-- Git executable path (`git_path`).
-- Default open directory (`default_open_dir`).
-- Auto-fetch enabled and interval (`auto_fetch_enabled`, `auto_fetch_interval_min`).
-
-Window size and other UI preferences are not stored yet. The Git path, default open directory, and auto-fetch settings are saved but not yet used: Git always runs as `git` from `PATH`, and the folder dialog ignores the default directory.
-
-The repository history file stores:
-
-- Recent repositories (`repos`).
-- Last active repository (`active`).
-
-Both files are read once at startup and written only on clean shutdown.
-
-Settings files are stored under app data, not inside repositories.
-
-Do not store credentials directly. Rely on Git credential helpers, OS keychains, or future dedicated auth integration.
+Planned: write with wide-character file APIs so non-ASCII user folders work, and save when settings change instead of only on a clean exit.
 
 ## Build Layout
 
 - `build.bat` builds a debug executable; `build.bat release` builds an optimized one.
-- The executable goes to `bin/surume.exe` and intermediate files to `obj/`.
-- Debug builds define `SURUME_DEBUG`, which enables the log file `%APPDATA%\Surume\surume_debug.log` (overwritten on each launch).
+- The executable goes to `bin/surume.exe`; intermediate files go to `obj/`, which is emptied at the start of every build.
+- Debug builds define `SURUME_DEBUG`, which enables `%APPDATA%\Surume\surume_debug.log` (overwritten on each launch).
+- `src/surume.rc` embeds `src/surume.ico` (16 to 256 px) as icon resource 1: the exe icon and the window/taskbar icon. The logo source is `docs/logo/surume.svg`; `docs/logo/make_icon.py` regenerates `surume.png` and `surume.ico` from it (needs Pillow and Edge). Rejected concepts are kept in `docs/logo/concepts/`.
 
-## Testing Strategy
+## Testing
 
-No tests exist yet. This section is the plan.
+No tests exist yet. The plan:
 
-### Unit Tests
-
-- Git porcelain parsers.
-- Branch and status models.
-- Command result handling.
-- Settings serialization.
-
-### Integration Tests
-
-Use temporary repositories to verify:
-
-- Status detection.
-- Stage and unstage.
-- Commit creation.
-- Branch creation and checkout.
-- History loading.
-- Diff retrieval.
-
-### Manual QA
-
-Exercise repositories with:
-
-- Clean working tree.
-- Untracked files.
-- Staged and unstaged changes.
-- Deleted and renamed files.
-- Merge conflicts.
-- Detached HEAD.
-- No remote.
-- Ahead and behind tracking branch state.
-
-## Open Questions
-
-- Should the diff viewer stay custom-rendered ImGui text (the current implementation) or move to a dedicated syntax-highlighted component?
-- What is the minimum supported OS set?
+- A test executable built by `build.bat` that links `git.cpp` and runs against throwaway repositories in a temp folder: status parsing (renames, non-ASCII and quoted names), branch and log parsing, command-line quoting, commit selection, partial-commit patches, stash.
+- Manual QA against repositories with: a clean tree, untracked files, deleted and renamed files, merge conflicts, detached `HEAD`, no remote, ahead/behind state, and a very large change set.

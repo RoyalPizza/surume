@@ -34,6 +34,7 @@ constexpr int HEARTBEAT_FRAMES = 600;
 constexpr INT_PTR SHELL_EXECUTE_SUCCESS_MIN = 32; // ShellExecute returns > 32 on success
 constexpr const wchar_t* WINDOW_CLASS_NAME = L"SurumeWnd";
 constexpr int TERMINAL_ARGS_SIZE = MAX_PATH * 2;
+constexpr WORD APP_ICON_ID = 1; // ICON resource in surume.rc
 
 struct Window
 {
@@ -169,6 +170,10 @@ static bool window_init(Window& window, const wchar_t* title)
     window_class.lpfnWndProc = window_proc;
     window_class.hInstance = GetModuleHandleW(nullptr);
     window_class.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    window_class.hIcon = LoadIconW(window_class.hInstance, MAKEINTRESOURCEW(APP_ICON_ID));
+    window_class.hIconSm = (HICON)LoadImageW(window_class.hInstance,
+        MAKEINTRESOURCEW(APP_ICON_ID), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON),
+        GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);
     window_class.lpszClassName = WINDOW_CLASS_NAME;
     if (!RegisterClassExW(&window_class))
     {

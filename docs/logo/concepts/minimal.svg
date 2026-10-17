@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="#1F1F23"/>
+  <!-- Tentacles as git branches -->
+  <g fill="none" stroke="#F7922F" stroke-width="18" stroke-linecap="round">
+    <path d="M128 140 L 128 186"/>
+    <path d="M110 136 C 100 162, 72 160, 72 186"/>
+    <path d="M146 136 C 156 162, 184 160, 184 186"/>
+  </g>
+  <!-- Commit nodes -->
+  <g fill="#1F1F23" stroke="#F7922F" stroke-width="14">
+    <circle cx="72" cy="198" r="14"/>
+    <circle cx="128" cy="198" r="14"/>
+    <circle cx="184" cy="198" r="14"/>
+  </g>
+  <!-- Head -->
+  <path d="M74 118 C 74 72, 98 46, 128 46 C 158 46, 182 72, 182 118 C 182 138, 74 138, 74 118 Z" fill="#F7922F"/>
+  <!-- Eyes (cut-outs) -->
+  <rect x="98" y="88" width="18" height="26" rx="9" fill="#1F1F23"/>
+  <rect x="140" y="88" width="18" height="26" rx="9" fill="#1F1F23"/>
+</svg>
