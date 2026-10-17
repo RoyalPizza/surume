@@ -16,7 +16,18 @@ Each task has a permanent ID: a group letter and a number, like `G3`. New tasks 
 
 ## Next
 
-Nothing queued. Pick from the v1 features and bugs below.
+Handoff notes (2026-10-17). Every bug and improvement is done. Left for v1, in suggested order:
+
+1. **F2 Sync** (fetch / pull / push / publish). Needs cancellable network jobs with no fixed timeout: add a cancel flag and a Win32 job object to `git_run` so cancelling kills git and its helpers. Set `GIT_TERMINAL_PROMPT=0` at startup so git never waits on a hidden terminal prompt. `RepoSnapshot::head` already has upstream and ahead/behind; the snapshot also needs the remote list (`git remote`).
+2. **F4 Auto-fetch** on top of F2: a timer in the main loop, with the `wait_for_events` timeout set to the next fetch.
+3. **F15 Partial commits**: line and hunk checkboxes in the Changes diff. The patch-building plan is in `ARCHITECTURE.md`; `DiffView::lines` already classifies every line.
+4. **F11** Git path and default folder settings; **F9** remove from the recent list and health warnings; the rest of **F13** (see the task).
+
+Working notes:
+
+- `build.bat test` runs 77 checks against throwaway repos. Add a test with each Git feature.
+- Things only a real mouse can test, never exercised yet: the file right-click menu (discard, copy path, show in Explorer), the discard and stash confirmations, the "Switch Branch" stash prompt, and the amend checkbox flow.
+- Python edits to C++ containing backslashes break when passed through a bash heredoc. Write the script to a file first.
 
 ## Bugs
 
@@ -59,7 +70,7 @@ Nothing queued. Pick from the v1 features and bugs below.
 - [x] F10 Binary and large-file diff placeholders.
 - [ ] F11 Settings that take effect: Git executable path, default open directory.
 - [x] F12 **Background jobs.** One Win32 worker thread with a job queue, per ARCHITECTURE.md: plain-data jobs and results, stale results dropped by generation, coalesced refreshes, exclusive mutations, cancellable network jobs with no fixed timeout. Includes splitting `AppState` by writer (snapshot, selection, view, requests, settings) and moving the GUI's direct Git calls into jobs (absorbs I6).
-- [ ] F13 Keyboard shortcuts and context menus.
+- [ ] F13 Keyboard shortcuts and context menus. Done so far: F5 refresh, Ctrl+1/Ctrl+2 tabs, Up/Down in the file and commit lists, and the file right-click menu. Left: Ctrl+Enter commit, Ctrl+O open, Ctrl+Shift+N new branch, a sync shortcut, branch and commit context menus, and shortcut hints in the menus.
 - [x] F14 Tests: Git output parsing against a throwaway repo.
 - [ ] F15 **Partial commits.** Line and hunk checkboxes in the diff gutter; the file checkbox shows a mixed state. Commit builds a patch from the selected lines and applies it with `git apply --cached`.
 - [x] F16 **Discard changes.** Context menu on a file or selection, and "Discard all changes..." in the Repository menu. Confirms first; untracked files are deleted.

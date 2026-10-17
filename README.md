@@ -6,7 +6,7 @@ A native Windows Git client in the spirit of GitHub Desktop, written in C++ with
 
 ## Status
 
-Early. The design is set: a GitHub Desktop-style client whose focus is speed (instant startup, low memory, never blocking the UI). The current code can open repositories, show changes and diffs, commit, switch/create/delete branches, and list history. Commit selection, sync (fetch/pull/push), and background Git operations are not done yet. See [docs/DESIGN.md](docs/DESIGN.md#current-status) for the full breakdown and [docs/TASKS.md](docs/TASKS.md) for what's next.
+Early, most of the first version is built. The design is set: a GitHub Desktop-style client whose focus is speed (instant startup, low memory, never blocking the UI). The current code can open repositories, show changes and diffs, commit, switch/create/delete branches, and list history. Commit selection, amend, discard, stash and commit details work; sync (fetch/pull/push) and partial commits are next. See [docs/DESIGN.md](docs/DESIGN.md#current-status) for the full breakdown and [docs/TASKS.md](docs/TASKS.md) for what's next.
 
 ## Requirements
 

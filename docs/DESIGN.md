@@ -19,31 +19,26 @@ These are the measurable form of the product's identity. Treat a regression agai
 
 ## Current Status
 
-The code is the inherited Gitaluna implementation, converted to the project's coding standard. Against this spec:
+As of 2026-10-17. Task IDs refer to `TASKS.md`.
 
 | Area | Status |
 | --- | --- |
-| Win32 + D3D11 window, vanilla dark ImGui style, app menu row | Done |
-| Fixed layout: header bar, Changes/History tabs, resizable splitter, right pane | Done |
+| Window, high-DPI, system fonts, menu row, fixed layout with splitter | Done |
 | Open repository, repo-root validation, recent list, restore last repo | Done |
 | Remove a repository from the recent list, health warnings | Not started (F9) |
-| Missing-Git error state | Partial: detected but not shown (U4) |
-| Repository refresh on window focus and F5 | Not started (F5) |
-| Changed file list with status badges | Partial: no checkboxes, no conflicted state (F1, G4) |
-| Checkbox commit selection, partial commits | Not started (F1, F15) |
-| Discard changes, stash, amend | Not started (F16, F17, F18) |
-| File path filter | Not started (F7) |
-| Unified text diff with line coloring | Done, but draws every line every frame (U5) |
-| Binary and large-file placeholders | Not started (F10) |
-| Commit summary + description | Done |
-| Branch picker: list, switch, create; delete from the Branch menu | Done |
-| Branch state markers, ahead/behind counts | Not started (F8, F3) |
+| Missing-Git error state | Done |
+| All Git work on a background worker; redraw only on change | Done |
+| Refresh on window focus and F5 | Done |
+| Changed files with checkboxes, status badges, conflicted state, filter | Done |
+| Partial commits (line and hunk checkboxes) | Not started (F15) |
+| Commit selected files, amend, discard, stash | Done |
+| Diff against HEAD with clipping; binary and large-diff placeholders | Done |
+| Branch picker with markers; create, switch (stash prompt), delete | Done |
+| Ahead/behind counts | Done |
 | Sync button, auto-fetch | Not started (F2, F4) |
-| History list | Done |
-| History commit details | Not started (F6) |
-| Background Git jobs | Not started: every Git call blocks the UI (F12) |
-| Redraw only on change | Not started (I4) |
-| Keyboard shortcuts, context menus | Not started (F13) |
+| History list, commit details, per-file commit diffs | Done |
+| Settings that take effect (Git path, default folder) | Not started (F11) |
+| Keyboard shortcuts, context menus | Partial (F13) |
 
 ## Product Goals
 
