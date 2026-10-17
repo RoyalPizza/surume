@@ -93,15 +93,14 @@ Repository validation uses `git rev-parse --show-toplevel`; the chosen folder mu
 
 Current:
 
-- Status: `git status --porcelain -z -u`
-- Branch: `git symbolic-ref --short HEAD`, `git branch --format=...`, `git branch -r --format=...`
+- Status: `git status --porcelain=v2 -z --branch -u`: files (including unmerged), current branch, upstream and ahead/behind in one process launch
+- Branches: `git branch --format=...`, `git branch -r --format=...`
 - Log: `git log --format=...` with `%x1f` field separators
 - Diff: `git diff`, `git diff --cached`, `git diff --no-index` for untracked files
 - Commit and branches: `git commit -m`, `git checkout`, `git checkout -b`, `git branch -d`
 
 Planned:
 
-- `git status --porcelain=v2 -z --branch` to get status, branch, upstream, and ahead/behind in **one** process launch instead of several.
 - Commit selection: `git reset -q` (index back to `HEAD`), `git add -A -- <paths>`, `git apply --cached` for partial files, then `git commit`.
 - Discard: `git restore --source=HEAD --staged --worktree -- <paths>`, and deleting untracked files.
 - Stash: `git stash push --include-untracked`, `git stash list`, `git stash show -p`, `git stash pop`, `git stash drop`.

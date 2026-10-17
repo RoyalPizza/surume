@@ -54,7 +54,12 @@ bool git_commit(const std::string& repo_path, const std::string& summary,
 // (including a repository with no commits yet).
 bool git_get_log(const std::string& repo_path, std::vector<CommitInfo>& commits);
 
-// Read index and working tree status for every changed file. Returns false on error.
+// Read the current branch, its upstream and ahead/behind counts, and the index and working
+// tree status of every changed file, in one git call. Returns false on error.
+bool git_get_status(const std::string& repo_path, BranchStatus& branch,
+    std::vector<FileStatus>& files);
+
+// git_get_status without the branch information.
 bool git_get_status(const std::string& repo_path, std::vector<FileStatus>& files);
 
 // Build a unified diff for one file: staged changes if any, otherwise working tree changes.

@@ -19,8 +19,18 @@ enum class BranchLocation
 struct BranchInfo
 {
     std::string name;
+    std::string upstream; // e.g. "origin/main"; empty when the branch has none
     BranchLocation location = BranchLocation::LOCAL;
     bool is_current = false;
+};
+
+// The checked-out branch and how it compares with its upstream.
+struct BranchStatus
+{
+    std::string name;     // empty on detached HEAD
+    std::string upstream; // empty when the branch has no upstream
+    int ahead = 0;        // commits on the branch that the upstream doesn't have
+    int behind = 0;       // commits on the upstream that the branch doesn't have
 };
 
 struct FileStatus
@@ -29,6 +39,7 @@ struct FileStatus
     std::string old_path; // non-empty only for renames and copies
     char index_status = ' ';    // porcelain X: staged state
     char worktree_status = ' '; // porcelain Y: working tree state
+    bool is_conflicted = false; // unmerged: a merge, rebase or stash pop left conflicts
 };
 
 struct CommitInfo
@@ -51,7 +62,7 @@ struct AppSettings
 // job result writes this; it is replaced wholesale, never edited in place.
 struct RepoSnapshot
 {
-    std::string current_branch; // empty on detached HEAD
+    BranchStatus head;
     std::vector<BranchInfo> branches;
     std::vector<FileStatus> files;
     std::vector<CommitInfo> commits;

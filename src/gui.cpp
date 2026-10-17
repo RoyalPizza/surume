@@ -53,6 +53,7 @@ constexpr int BRANCH_NAME_SIZE = 128;
 constexpr int SETTINGS_PATH_SIZE = 512;
 
 // Colors: hardcoded only for semantic Git states
+constexpr ImVec4 COLOR_CONFLICTED = ImVec4(1.0f, 0.35f, 0.2f, 1.0f);
 constexpr ImVec4 COLOR_UNTRACKED = ImVec4(0.55f, 0.55f, 0.55f, 1.0f);
 constexpr ImVec4 COLOR_DELETED = ImVec4(0.9f, 0.3f, 0.3f, 1.0f);
 constexpr ImVec4 COLOR_RENAMED = ImVec4(0.4f, 0.7f, 1.0f, 1.0f);
@@ -64,6 +65,10 @@ constexpr ImVec4 COLOR_DIFF_HUNK_TEXT = ImVec4(0.5f, 0.8f, 1.0f, 1.0f);
 constexpr ImVec4 COLOR_ERROR_TEXT = ImVec4(1.0f, 0.4f, 0.4f, 1.0f);
 constexpr ImU32 COLOR_DIFF_ADDED_BACKGROUND = IM_COL32(30, 70, 30, 255);
 constexpr ImU32 COLOR_DIFF_REMOVED_BACKGROUND = IM_COL32(70, 25, 25, 255);
+
+// UTF-8 arrows (Segoe UI has them)
+constexpr const char* ARROW_UP = "\xE2\x86\x91";
+constexpr const char* ARROW_DOWN = "\xE2\x86\x93";
 
 constexpr ImGuiWindowFlags MAIN_WINDOW_FLAGS =
     ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
@@ -252,8 +257,8 @@ static void render_new_branch_modal(AppState& state)
         return;
     }
 
-    const char* source = state.repo.current_branch.empty() ? "(detached HEAD)" :
-        state.repo.current_branch.c_str();
+    const char* source = state.repo.head.name.empty() ? "(detached HEAD)" :
+        state.repo.head.name.c_str();
     ImGui::Text("Create from: %s", source);
     ImGui::Spacing();
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
@@ -578,19 +583,19 @@ static void render_repo_picker(AppState& state)
     ImGui::EndPopup();
 }
 
-static const char* branch_indicator(BranchLocation location)
+// Dimmed text after a branch name saying where it lives.
+static const char* branch_marker(const BranchInfo& branch)
 {
-    // Placeholders: all three states render the same until markers are designed
-    switch (location)
+    switch (branch.location)
     {
         case BranchLocation::LOCAL:
-            return "  ";
+            return "local only";
         case BranchLocation::REMOTE:
-            return "  ";
+            return "remote";
         case BranchLocation::LOCAL_AND_REMOTE:
-            return "  ";
+            return branch.upstream.c_str();
     }
-    return "  ";
+    return "";
 }
 
 static void checkout_branch(AppState& state, const BranchInfo& branch)
@@ -609,17 +614,28 @@ static void render_branch_picker_popup(AppState& state)
     ImGui::Separator();
 
     const std::vector<BranchInfo>& branches = state.repo.branches;
-    for (const BranchInfo& branch : branches)
+    if (ImGui::BeginTable("##branches", 2, ImGuiTableFlags_SizingFixedFit))
     {
-        char entry[PICKER_LABEL_SIZE];
-        snprintf(entry, sizeof(entry), "%s%s%s", branch_indicator(branch.location),
-            branch.is_current ? "* " : "  ", branch.name.c_str());
-
-        if (ImGui::Selectable(entry, branch.is_current) && !branch.is_current)
+        for (int i = 0; i < (int)branches.size(); ++i)
         {
-            checkout_branch(state, branch);
-            ImGui::CloseCurrentPopup();
+            const BranchInfo& branch = branches[i];
+            ImGui::PushID(i);
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            char entry[PICKER_LABEL_SIZE];
+            snprintf(entry, sizeof(entry), "%s%s", branch.is_current ? "* " : "  ",
+                branch.name.c_str());
+            if (ImGui::Selectable(entry, branch.is_current,
+                ImGuiSelectableFlags_SpanAllColumns) && !branch.is_current)
+            {
+                checkout_branch(state, branch);
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("%s", branch_marker(branch));
+            ImGui::PopID();
         }
+        ImGui::EndTable();
     }
 
     if (!branches.empty())
@@ -639,7 +655,7 @@ static void render_branch_picker(AppState& state)
     bool has_repo = !state.active_repo.empty();
     ImGui::BeginDisabled(!has_repo || state.is_mutation_running);
 
-    const std::string& current = state.repo.current_branch;
+    const std::string& current = state.repo.head.name;
     const char* name = current.empty() ? "No Branch" : current.c_str();
     char label[PICKER_LABEL_SIZE];
     snprintf(label, sizeof(label), " %s  v ##branchbutton", name);
@@ -685,6 +701,31 @@ static void render_sync_button(const AppState& state, float padding_y)
     ImGui::EndDisabled();
 }
 
+// "up 2 down 1" arrows next to the branch picker, or a note when the branch isn't published.
+static void render_ahead_behind(const AppState& state)
+{
+    const BranchStatus& head = state.repo.head;
+    if (state.active_repo.empty() || head.name.empty())
+    {
+        return;
+    }
+
+    ImGui::SameLine(0, scaled(HEADER_BUTTON_SPACING) * 2);
+    ImGui::AlignTextToFramePadding();
+    if (head.upstream.empty())
+    {
+        ImGui::TextDisabled("not published");
+        return;
+    }
+
+    ImGui::TextDisabled("%s%d  %s%d", ARROW_UP, head.ahead, ARROW_DOWN, head.behind);
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("%d ahead of and %d behind %s", head.ahead, head.behind,
+            head.upstream.c_str());
+    }
+}
+
 static void render_header_bar(AppState& state)
 {
     float padding_y = (scaled(HEADER_HEIGHT) - ImGui::GetFrameHeight()) * 0.5f;
@@ -693,6 +734,7 @@ static void render_header_bar(AppState& state)
     render_repo_picker(state);
     ImGui::SameLine(0, scaled(HEADER_BUTTON_SPACING));
     render_branch_picker(state);
+    render_ahead_behind(state);
     render_sync_button(state, padding_y);
 
     ImVec2 line_start = ImGui::GetWindowPos();
@@ -709,7 +751,11 @@ static void render_header_bar(AppState& state)
 static FileBadge file_badge(const FileStatus& file)
 {
     FileBadge badge;
-    if (file.index_status == '?' && file.worktree_status == '?')
+    if (file.is_conflicted)
+    {
+        badge = { '!', COLOR_CONFLICTED, "Conflicted: finish the merge in an editor or terminal" };
+    }
+    else if (file.index_status == '?' && file.worktree_status == '?')
     {
         badge = { '?', COLOR_UNTRACKED, "Untracked" };
     }
@@ -761,6 +807,23 @@ static void render_file_row(AppState& state, int index, float badge_width, float
     }
 }
 
+// Conflicts block normal work until resolved, so say so above the list.
+static void render_conflict_banner(const AppState& state)
+{
+    for (const FileStatus& file : state.repo.files)
+    {
+        if (file.is_conflicted)
+        {
+            ImGui::PushStyleColor(ImGuiCol_Text, COLOR_CONFLICTED);
+            ImGui::TextWrapped("This repository has merge conflicts. Resolve them in an editor "
+                "or terminal, then commit.");
+            ImGui::PopStyleColor();
+            ImGui::Separator();
+            return;
+        }
+    }
+}
+
 static void render_file_list(AppState& state)
 {
     if (state.active_repo.empty())
@@ -772,6 +835,7 @@ static void render_file_list(AppState& state)
         ImGui::TextDisabled("No local changes");
         return;
     }
+    render_conflict_banner(state);
 
     const ImGuiStyle& style = ImGui::GetStyle();
     float badge_width = ImGui::CalcTextSize("M").x + style.ItemSpacing.x * 3;
@@ -787,7 +851,7 @@ static void render_file_list(AppState& state)
 static void commit(AppState& state)
 {
     LOG_INFO("Commit: summary='%s' branch='%s'", commit_summary,
-        state.repo.current_branch.c_str());
+        state.repo.head.name.c_str());
     Request commit_request;
     commit_request.kind = RequestKind::COMMIT;
     commit_request.text = commit_summary;
@@ -824,7 +888,7 @@ static void render_commit_footer(AppState& state, float width)
     bool can_commit = has_repo && commit_summary[0] != '\0' && !state.is_mutation_running;
     ImGui::BeginDisabled(!can_commit);
     char label[COMMIT_LABEL_SIZE];
-    const std::string& current = state.repo.current_branch;
+    const std::string& current = state.repo.head.name;
     const char* branch = current.empty() ? "branch" : current.c_str();
     snprintf(label, sizeof(label), "Commit to %s", branch);
     if (ImGui::Button(label, ImVec2(input_width, 0)))

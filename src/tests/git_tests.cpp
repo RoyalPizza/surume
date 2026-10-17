@@ -253,6 +253,59 @@ static void test_branches_and_log(const std::string& root)
         "switch to a branch named like a file");
 }
 
+static void commit_file(const std::string& repo, const char* text, const char* message)
+{
+    write_file(repo + "\\a.txt", text);
+    run(repo, { "add", "a.txt" });
+    run(repo, { "commit", "-q", "-m", message });
+}
+
+static void test_ahead_behind(const std::string& root)
+{
+    std::string remote = root + "\\remote.git";
+    make_directory(remote);
+    run(remote, { "init", "-q", "--bare", "-b", "main" });
+
+    std::string repo = create_repo(root, "ahead behind");
+    commit_file(repo, "1\n", "one");
+    commit_file(repo, "2\n", "two");
+    run(repo, { "remote", "add", "origin", remote });
+    run(repo, { "push", "-q", "-u", "origin", "main" });
+
+    BranchStatus branch;
+    std::vector<FileStatus> files;
+    check(git_get_status(repo, branch, files), "status with branch info succeeds");
+    check(branch.name == "main" && branch.upstream == "origin/main", "branch and upstream read");
+    check(branch.ahead == 0 && branch.behind == 0, "even with upstream after push");
+
+    // Local drops "two" and adds "three": one ahead, one behind
+    run(repo, { "reset", "-q", "--hard", "HEAD~1" });
+    commit_file(repo, "3\n", "three");
+    check(git_get_status(repo, branch, files) && branch.ahead == 1 && branch.behind == 1,
+        "1 ahead and 1 behind after diverging");
+
+    run(repo, { "switch", "-q", "--detach" });
+    check(git_get_status(repo, branch, files) && branch.name.empty(), "detached HEAD has no name");
+}
+
+static void test_conflict(const std::string& root)
+{
+    std::string repo = create_repo(root, "conflict");
+    commit_file(repo, "base\n", "base");
+    run(repo, { "switch", "-q", "-c", "other" });
+    commit_file(repo, "other\n", "other");
+    run(repo, { "switch", "-q", "main" });
+    commit_file(repo, "main\n", "main");
+
+    GitResult result;
+    check(!git_run(repo, { "merge", "other" }, result), "merge stops on the conflict");
+
+    std::vector<FileStatus> files;
+    check(git_get_status(repo, files), "status during a conflict succeeds");
+    const FileStatus* conflicted = find_file(files, "a.txt");
+    check(conflicted != nullptr && conflicted->is_conflicted, "conflicted file is marked");
+}
+
 static void test_persistence(const std::string& root)
 {
     std::string dir = root + "\\app data \xC3\xBC\\"; // "ü"
@@ -304,6 +357,8 @@ int main()
     test_commit_message(root);
     test_status(root);
     test_branches_and_log(root);
+    test_ahead_behind(root);
+    test_conflict(root);
     test_persistence(root);
 
     delete_tree(root);

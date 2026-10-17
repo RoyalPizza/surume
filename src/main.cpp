@@ -656,7 +656,7 @@ static void apply_open_repo(AppState& state, const JobResult& result)
     state.repo = result.snapshot;
     push_request(state, RequestKind::SAVE_SETTINGS);
     LOG_INFO("open_repo: name='%s' branch='%s'", state.active_repo_name.c_str(),
-        state.repo.current_branch.c_str());
+        state.repo.head.name.c_str());
 }
 
 static const char* failure_prefix(JobKind kind)

@@ -16,7 +16,11 @@ constexpr DWORD POLL_INTERVAL_MILLISECONDS = 10;
 constexpr DWORD PIPE_READ_SIZE = 4096;
 constexpr int MAX_LOG_COMMITS = 100;
 constexpr char LOG_FIELD_SEPARATOR = '\x1f';
-constexpr size_t STATUS_PATH_OFFSET = 3; // "XY path"
+constexpr size_t STATUS_V2_MIN_ENTRY = 3; // "? x"
+// Space-separated fields before the path in porcelain v2 entries
+constexpr int ORDINARY_FIELDS = 8;  // "1 XY sub mH mI mW hH hI path"
+constexpr int RENAME_FIELDS = 9;    // "2 XY sub mH mI mW hH hI Xscore path"
+constexpr int UNMERGED_FIELDS = 10; // "u XY sub m1 m2 m3 mW h1 h2 h3 path"
 constexpr DWORD RESOLVED_PATH_SIZE = 32768; // longest Windows path
 
 // Convert UTF-8 to a null-terminated UTF-16 buffer for Win32 W functions.
@@ -383,7 +387,8 @@ bool git_get_branches(const std::string& repo_path, std::vector<BranchInfo>& bra
         BranchInfo branch;
         branch.is_current = line[0] == '*';
         branch.name = line.substr(first_bar + 1, second_bar - first_bar - 1);
-        bool has_upstream = second_bar + 1 < line.size();
+        branch.upstream = line.substr(second_bar + 1);
+        bool has_upstream = !branch.upstream.empty();
         branch.location = has_upstream ? BranchLocation::LOCAL_AND_REMOTE : BranchLocation::LOCAL;
         branches.push_back(branch);
     }
@@ -489,13 +494,70 @@ bool git_get_log(const std::string& repo_path, std::vector<CommitInfo>& commits)
     return true;
 }
 
-bool git_get_status(const std::string& repo_path, std::vector<FileStatus>& files)
+static bool starts_with(const std::string& text, const char* prefix)
 {
+    return text.compare(0, strlen(prefix), prefix) == 0;
+}
+
+// The text after the first count space-separated fields. Returns false if there are fewer.
+static bool text_after_fields(const std::string& entry, int count, std::string& rest)
+{
+    size_t position = 0;
+    for (int i = 0; i < count; ++i)
+    {
+        position = entry.find(' ', position);
+        if (position == std::string::npos)
+        {
+            return false;
+        }
+        ++position;
+    }
+    rest = entry.substr(position);
+    return true;
+}
+
+// Porcelain v2 writes '.' for "unchanged"; FileStatus uses ' ' like v1.
+static char status_char(char c)
+{
+    return c == '.' ? ' ' : c;
+}
+
+static void parse_branch_header(const std::string& entry, BranchStatus& branch)
+{
+    if (starts_with(entry, "# branch.head "))
+    {
+        branch.name = entry.substr(strlen("# branch.head "));
+        if (branch.name == "(detached)")
+        {
+            branch.name.clear();
+        }
+    }
+    else if (starts_with(entry, "# branch.upstream "))
+    {
+        branch.upstream = entry.substr(strlen("# branch.upstream "));
+    }
+    else if (starts_with(entry, "# branch.ab "))
+    {
+        // "+<ahead> -<behind>"
+        if (sscanf_s(entry.c_str() + strlen("# branch.ab "), "+%d -%d",
+            &branch.ahead, &branch.behind) != 2)
+        {
+            branch.ahead = 0;
+            branch.behind = 0;
+        }
+    }
+}
+
+bool git_get_status(const std::string& repo_path, BranchStatus& branch,
+    std::vector<FileStatus>& files)
+{
+    branch = {};
     files.clear();
 
-    // -z: NUL-separated, paths never quoted. A rename is "XY new\0old\0".
+    // v2 with -z: NUL-separated, paths never quoted, branch headers first. A rename or copy
+    // entry is followed by its original path as the next NUL-separated piece.
     GitResult result;
-    if (!git_run(repo_path, { "status", "--porcelain", "-z", "-u" }, result))
+    if (!git_run(repo_path, { "status", "--porcelain=v2", "-z", "--branch", "-u" }, result))
     {
         LOG_WARN("git_get_status failed (exit=%d): %s", result.exit_code,
             trim_end(result.error_output).c_str());
@@ -508,26 +570,64 @@ bool git_get_status(const std::string& repo_path, std::vector<FileStatus>& files
     {
         const std::string& entry = entries[i];
         ++i;
-        if (entry.size() <= STATUS_PATH_OFFSET)
+        if (entry.size() < STATUS_V2_MIN_ENTRY)
         {
             continue;
         }
 
         FileStatus file;
-        file.index_status = entry[0];
-        file.worktree_status = entry[1];
-        file.path = entry.substr(STATUS_PATH_OFFSET);
-
-        bool is_renamed_or_copied = file.index_status == 'R' || file.index_status == 'C' ||
-            file.worktree_status == 'R' || file.worktree_status == 'C';
-        if (is_renamed_or_copied && i < entries.size())
+        switch (entry[0])
         {
-            file.old_path = entries[i];
-            ++i;
+            case '#':
+                parse_branch_header(entry, branch);
+                continue;
+
+            case '1':
+                if (!text_after_fields(entry, ORDINARY_FIELDS, file.path))
+                {
+                    continue;
+                }
+                break;
+
+            case '2':
+                if (!text_after_fields(entry, RENAME_FIELDS, file.path) || i >= entries.size())
+                {
+                    continue;
+                }
+                file.old_path = entries[i];
+                ++i;
+                break;
+
+            case 'u':
+                if (!text_after_fields(entry, UNMERGED_FIELDS, file.path))
+                {
+                    continue;
+                }
+                file.is_conflicted = true;
+                break;
+
+            case '?':
+                file.index_status = '?';
+                file.worktree_status = '?';
+                file.path = entry.substr(2);
+                files.push_back(file);
+                continue;
+
+            default:
+                continue; // '!' ignored files, or anything newer than this parser
         }
+
+        file.index_status = status_char(entry[2]);
+        file.worktree_status = status_char(entry[3]);
         files.push_back(file);
     }
     return true;
+}
+
+bool git_get_status(const std::string& repo_path, std::vector<FileStatus>& files)
+{
+    BranchStatus branch;
+    return git_get_status(repo_path, branch, files);
 }
 
 bool git_get_diff(const std::string& repo_path, const FileStatus& file, std::string& diff)
@@ -579,16 +679,13 @@ bool git_get_diff(const std::string& repo_path, const FileStatus& file, std::str
 
 bool git_load_snapshot(const std::string& repo_path, RepoSnapshot& snapshot)
 {
+    // One status call gives files, branch, upstream and ahead/behind
     snapshot = {};
-    if (!git_get_status(repo_path, snapshot.files))
+    if (!git_get_status(repo_path, snapshot.head, snapshot.files))
     {
         return false;
     }
 
-    if (!git_get_current_branch(repo_path, snapshot.current_branch))
-    {
-        snapshot.current_branch.clear();
-    }
     if (!git_get_branches(repo_path, snapshot.branches))
     {
         snapshot.branches.clear();
@@ -598,8 +695,9 @@ bool git_load_snapshot(const std::string& repo_path, RepoSnapshot& snapshot)
         snapshot.commits.clear(); // normal for a repository with no commits yet
     }
 
-    LOG_INFO("git_load_snapshot: branch='%s' branches=%d files=%d commits=%d",
-        snapshot.current_branch.c_str(), (int)snapshot.branches.size(),
+    LOG_INFO("git_load_snapshot: branch='%s' upstream='%s' +%d -%d branches=%d files=%d "
+        "commits=%d", snapshot.head.name.c_str(), snapshot.head.upstream.c_str(),
+        snapshot.head.ahead, snapshot.head.behind, (int)snapshot.branches.size(),
         (int)snapshot.files.size(), (int)snapshot.commits.size());
     return true;
 }
