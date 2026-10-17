@@ -77,8 +77,8 @@ Nothing queued. Pick from the v1 features and bugs below.
 
 ## Improvements
 
-- [ ] I1 High-DPI support (`ImGui_ImplWin32_EnableDpiAwareness` or a manifest); the window is blurry on scaled displays.
-- [ ] I2 Load a TTF font with wider glyph coverage so non-ASCII file names don't render as `?`.
+- [x] I1 High-DPI support (`ImGui_ImplWin32_EnableDpiAwareness` or a manifest); the window is blurry on scaled displays.
+- [x] I2 Load a TTF font with wider glyph coverage so non-ASCII file names don't render as `?`.
 - [x] I3 Add `/utf-8` to `build.bat`; `gui.cpp` contains UTF-8 characters.
 - [ ] I4 Only redraw when something changes instead of rendering at 60 fps while idle.
 - [x] I5 Save settings when they change, not only on a clean exit.

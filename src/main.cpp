@@ -36,6 +36,11 @@ constexpr const wchar_t* WINDOW_CLASS_NAME = L"SurumeWnd";
 constexpr int TERMINAL_ARGS_SIZE = MAX_PATH * 2;
 constexpr WORD APP_ICON_ID = 1; // ICON resource in surume.rc
 constexpr DWORD OCCLUDED_SLEEP_MILLISECONDS = 10;
+constexpr float BASE_DPI = 96.0f;
+constexpr float UI_FONT_SIZE = 16.0f; // also used for the monospace diff font
+constexpr const wchar_t* UI_FONT_FILE = L"segoeui.ttf";
+constexpr const wchar_t* MONO_FONT_FILE = L"consola.ttf";
+constexpr const wchar_t* CJK_FONT_FILE = L"msyh.ttc"; // merged into both for CJK glyphs
 
 struct Window
 {
@@ -51,10 +56,44 @@ struct Window
     bool has_pending_resize = false;
     int pending_width = 0;
     int pending_height = 0;
+    float dpi_scale = 1.0f;
+    float pending_dpi_scale = 0.0f; // non-zero when the window moved to a monitor with another DPI
 };
 
 // Single window; window_proc needs to reach it
 static Window main_window;
+
+// -------------------------------------------------------------------------
+// Text conversion
+// -------------------------------------------------------------------------
+
+static std::string to_utf8(const wchar_t* text)
+{
+    int len = WideCharToMultiByte(CP_UTF8, 0, text, -1, nullptr, 0, nullptr, nullptr);
+    if (len <= 1)
+    {
+        return "";
+    }
+
+    std::string utf8(len, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, text, -1, utf8.data(), len, nullptr, nullptr);
+    utf8.pop_back(); // terminator written by WideCharToMultiByte
+    return utf8;
+}
+
+// Convert UTF-8 to a null-terminated UTF-16 buffer for Win32 W functions.
+static std::vector<wchar_t> to_wide(const std::string& text)
+{
+    int len = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, nullptr, 0);
+    if (len <= 0)
+    {
+        return std::vector<wchar_t>(1, L'\0');
+    }
+
+    std::vector<wchar_t> wide(len, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, wide.data(), len);
+    return wide;
+}
 
 // -------------------------------------------------------------------------
 // Window and D3D11
@@ -77,6 +116,17 @@ static LRESULT WINAPI window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
                 main_window.pending_height = HIWORD(lparam);
             }
             return 0;
+
+        case WM_DPICHANGED:
+        {
+            // Move to the size Windows suggests for the new DPI; rescale on the next frame
+            const RECT* suggested = (const RECT*)lparam;
+            main_window.pending_dpi_scale = HIWORD(wparam) / BASE_DPI;
+            SetWindowPos(hwnd, nullptr, suggested->left, suggested->top,
+                suggested->right - suggested->left, suggested->bottom - suggested->top,
+                SWP_NOZORDER | SWP_NOACTIVATE);
+            return 0;
+        }
 
         case WM_SYSCOMMAND:
             // Keep Alt from opening the (nonexistent) system menu bar
@@ -161,6 +211,68 @@ static void destroy_render_target(Window& window)
     }
 }
 
+// Path of a font in the Windows fonts folder as UTF-8, or empty if the file doesn't exist.
+static std::string system_font_path(const wchar_t* file_name)
+{
+    wchar_t path[MAX_PATH] = {};
+    UINT len = GetWindowsDirectoryW(path, MAX_PATH);
+    if (len == 0 || len >= MAX_PATH)
+    {
+        return "";
+    }
+    wcscat_s(path, MAX_PATH, L"\\Fonts\\");
+    wcscat_s(path, MAX_PATH, file_name);
+    if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES)
+    {
+        return "";
+    }
+    return to_utf8(path);
+}
+
+// Add a font, with the CJK font merged in for characters it lacks. Returns false if the main
+// font file is missing; ImGui's built-in font is used instead.
+static bool add_font(const wchar_t* file_name)
+{
+    std::string path = system_font_path(file_name);
+    if (path.empty())
+    {
+        LOG_WARN("font not found: %ls", file_name);
+        return false;
+    }
+
+    ImGuiIO& io = ImGui::GetIO();
+    io.Fonts->AddFontFromFileTTF(path.c_str(), UI_FONT_SIZE);
+    std::string cjk_path = system_font_path(CJK_FONT_FILE);
+    if (!cjk_path.empty())
+    {
+        ImFontConfig merge;
+        merge.MergeMode = true;
+        io.Fonts->AddFontFromFileTTF(cjk_path.c_str(), UI_FONT_SIZE, &merge);
+    }
+    return true;
+}
+
+// Fonts[0] is the UI font, Fonts[1] the monospace font the GUI uses for diffs.
+static void load_fonts()
+{
+    ImGuiIO& io = ImGui::GetIO();
+    if (!add_font(UI_FONT_FILE))
+    {
+        io.Fonts->AddFontDefault();
+    }
+    add_font(MONO_FONT_FILE);
+}
+
+// Reset the style and scale every size and the fonts for the given DPI scale.
+static void apply_dpi_scale(float scale)
+{
+    ImGuiStyle style;
+    ImGui::StyleColorsDark(&style);
+    style.ScaleAllSizes(scale);
+    style.FontScaleDpi = scale;
+    ImGui::GetStyle() = style;
+}
+
 static bool window_init(Window& window, const wchar_t* title)
 {
     HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
@@ -187,6 +299,11 @@ static bool window_init(Window& window, const wchar_t* title)
         return false;
     }
 
+    POINT origin = { 0, 0 };
+    window.dpi_scale = ImGui_ImplWin32_GetDpiScaleForMonitor(
+        MonitorFromPoint(origin, MONITOR_DEFAULTTOPRIMARY));
+    window.width = (int)(INITIAL_WIDTH * window.dpi_scale);
+    window.height = (int)(INITIAL_HEIGHT * window.dpi_scale);
     window.hwnd = CreateWindowExW(0, WINDOW_CLASS_NAME, title, WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT, window.width, window.height,
         nullptr, nullptr, window_class.hInstance, nullptr);
@@ -209,7 +326,8 @@ static bool window_init(Window& window, const wchar_t* title)
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.IniFilename = nullptr; // layout is app-owned and persisted in settings.toml
-    ImGui::StyleColorsDark();
+    apply_dpi_scale(window.dpi_scale);
+    load_fonts();
     if (!ImGui_ImplWin32_Init(window.hwnd) ||
         !ImGui_ImplDX11_Init(window.device, window.device_context))
     {
@@ -217,7 +335,8 @@ static bool window_init(Window& window, const wchar_t* title)
         return false;
     }
 
-    LOG_INFO("window_init complete, ImGui %s", ImGui::GetVersion());
+    LOG_INFO("window_init complete, ImGui %s, DPI scale %.2f", ImGui::GetVersion(),
+        window.dpi_scale);
     return true;
 }
 
@@ -233,6 +352,19 @@ static void pump_messages(Window& window)
             window.is_quit_requested = true;
         }
     }
+}
+
+static void handle_dpi_change(Window& window)
+{
+    if (window.pending_dpi_scale == 0.0f)
+    {
+        return;
+    }
+
+    window.dpi_scale = window.pending_dpi_scale;
+    window.pending_dpi_scale = 0.0f;
+    apply_dpi_scale(window.dpi_scale);
+    LOG_INFO("DPI scale changed to %.2f", window.dpi_scale);
 }
 
 static void handle_resize(Window& window)
@@ -333,34 +465,6 @@ static void window_shutdown(Window& window)
 // -------------------------------------------------------------------------
 // Shell
 // -------------------------------------------------------------------------
-
-static std::string to_utf8(const wchar_t* text)
-{
-    int len = WideCharToMultiByte(CP_UTF8, 0, text, -1, nullptr, 0, nullptr, nullptr);
-    if (len <= 1)
-    {
-        return "";
-    }
-
-    std::string utf8(len, '\0');
-    WideCharToMultiByte(CP_UTF8, 0, text, -1, utf8.data(), len, nullptr, nullptr);
-    utf8.pop_back(); // terminator written by WideCharToMultiByte
-    return utf8;
-}
-
-// Convert UTF-8 to a null-terminated UTF-16 buffer for Win32 W functions.
-static std::vector<wchar_t> to_wide(const std::string& text)
-{
-    int len = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, nullptr, 0);
-    if (len <= 0)
-    {
-        return std::vector<wchar_t>(1, L'\0');
-    }
-
-    std::vector<wchar_t> wide(len, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, wide.data(), len);
-    return wide;
-}
 
 // Show the folder picker. Returns false if cancelled or failed; folder is UTF-8.
 static bool pick_folder(HWND parent, const wchar_t* title, std::string& folder)
@@ -577,6 +681,7 @@ static void handle_requests(AppState& state, Window& window, const std::string& 
 
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
 {
+    ImGui_ImplWin32_EnableDpiAwareness();
     std::string app_data_dir = get_app_data_dir();
     log_init(app_data_dir);
     LOG_INFO("=== Surume starting === app data '%s'", app_data_dir.c_str());
@@ -606,6 +711,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
             continue;
         }
 
+        handle_dpi_change(main_window);
         handle_resize(main_window);
         begin_frame();
         gui_render(state);

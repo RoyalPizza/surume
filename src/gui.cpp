@@ -89,6 +89,7 @@ struct FileBadge
 };
 
 // Single GUI instance: widget text and selections that live across frames
+static float ui_scale = 1.0f; // DPI scale for this frame, from the style
 static char commit_summary[COMMIT_SUMMARY_SIZE] = {};
 static char commit_description[COMMIT_DESCRIPTION_SIZE] = {};
 static char new_branch_name[BRANCH_NAME_SIZE] = {};
@@ -100,6 +101,12 @@ static int settings_auto_fetch_minutes = 15;
 static bool is_settings_loaded = false;
 static NavMode shown_nav_mode = NavMode::CHANGES;
 static bool is_first_frame = true;
+
+// Pixel sizes above are for 96 DPI; scale them for the current monitor.
+static float scaled(float pixels)
+{
+    return pixels * ui_scale;
+}
 
 // -------------------------------------------------------------------------
 // Modals
@@ -121,7 +128,7 @@ static void render_about_modal()
     ImGui::Separator();
     ImGui::Spacing();
 
-    ImGui::SetCursorPosX((ImGui::GetWindowWidth() - ABOUT_BUTTON_WIDTH) * 0.5f);
+    ImGui::SetCursorPosX((ImGui::GetWindowWidth() - scaled(ABOUT_BUTTON_WIDTH)) * 0.5f);
     if (ImGui::Button("OK", ImVec2(ABOUT_BUTTON_WIDTH, 0)))
     {
         ImGui::CloseCurrentPopup();
@@ -153,7 +160,7 @@ static void render_settings_modal(AppState& state)
         load_settings_fields(state.settings);
     }
 
-    float input_width = ImGui::GetContentRegionAvail().x - SETTINGS_LABEL_WIDTH -
+    float input_width = ImGui::GetContentRegionAvail().x - scaled(SETTINGS_LABEL_WIDTH) -
         ImGui::GetStyle().ItemSpacing.x;
 
     ImGui::Text("Git executable path");
@@ -309,8 +316,9 @@ static void render_delete_branch_modal(AppState& state)
     }
     else
     {
-        ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(FLT_MAX, DELETE_LIST_MAX_HEIGHT));
-        if (ImGui::BeginChild("##deletelist", ImVec2(0, DELETE_LIST_HEIGHT), true))
+        ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0),
+            ImVec2(FLT_MAX, scaled(DELETE_LIST_MAX_HEIGHT)));
+        if (ImGui::BeginChild("##deletelist", ImVec2(0, scaled(DELETE_LIST_HEIGHT)), true))
         {
             for (int i = 0; i < (int)deletable.size(); ++i)
             {
@@ -652,9 +660,9 @@ static void render_sync_button(const AppState& state, float padding_y)
     // Placeholder until sync is implemented
     const char* label = "Fetch origin";
     float width = ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2 +
-        SYNC_BUTTON_EXTRA_WIDTH;
+        scaled(SYNC_BUTTON_EXTRA_WIDTH);
     ImGui::SetCursorPosY(padding_y);
-    ImGui::SetCursorPosX(ImGui::GetWindowWidth() - width - HEADER_PADDING_X);
+    ImGui::SetCursorPosX(ImGui::GetWindowWidth() - width - scaled(HEADER_PADDING_X));
 
     ImGui::BeginDisabled(state.active_repo.empty());
     if (ImGui::Button(label, ImVec2(width, 0)))
@@ -670,12 +678,12 @@ static void render_header_bar(AppState& state)
     ImGui::SetCursorPos(ImVec2(HEADER_PADDING_X, padding_y));
 
     render_repo_picker(state);
-    ImGui::SameLine(0, HEADER_BUTTON_SPACING);
+    ImGui::SameLine(0, scaled(HEADER_BUTTON_SPACING));
     render_branch_picker(state);
     render_sync_button(state, padding_y);
 
     ImVec2 line_start = ImGui::GetWindowPos();
-    line_start.y += HEADER_HEIGHT;
+    line_start.y += scaled(HEADER_HEIGHT);
     ImVec2 line_end = ImVec2(line_start.x + ImGui::GetWindowWidth(), line_start.y);
     ImGui::GetWindowDrawList()->AddLine(line_start, line_end,
         ImGui::GetColorU32(ImGuiCol_Separator), 1.0f);
@@ -783,8 +791,8 @@ static void commit(AppState& state)
 static void render_commit_footer(AppState& state, float width)
 {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
-        ImVec2(COMMIT_FOOTER_PADDING_X, COMMIT_FOOTER_PADDING_Y));
-    ImGui::BeginChild("##commitfooter", ImVec2(width, COMMIT_FOOTER_HEIGHT), false,
+        ImVec2(COMMIT_FOOTER_PADDING_X, scaled(COMMIT_FOOTER_PADDING_Y)));
+    ImGui::BeginChild("##commitfooter", ImVec2(width, scaled(COMMIT_FOOTER_HEIGHT)), false,
         ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
     bool has_repo = !state.active_repo.empty();
@@ -796,7 +804,7 @@ static void render_commit_footer(AppState& state, float width)
         commit_summary, sizeof(commit_summary));
     ImGui::Spacing();
     ImGui::InputTextMultiline("##description", commit_description, sizeof(commit_description),
-        ImVec2(input_width, COMMIT_DESCRIPTION_HEIGHT));
+        ImVec2(input_width, scaled(COMMIT_DESCRIPTION_HEIGHT)));
     ImGui::Spacing();
 
     bool can_commit = has_repo && commit_summary[0] != '\0';
@@ -819,7 +827,8 @@ static void render_changes_tab(AppState& state)
 {
     ImVec2 available = ImGui::GetContentRegionAvail();
 
-    ImGui::BeginChild("##filelist", ImVec2(available.x, available.y - COMMIT_FOOTER_HEIGHT),
+    float list_height = available.y - scaled(COMMIT_FOOTER_HEIGHT);
+    ImGui::BeginChild("##filelist", ImVec2(available.x, list_height),
         false);
     render_file_list(state);
     ImGui::EndChild();
@@ -986,14 +995,23 @@ static void render_diff_line(const char* start, const char* end, float line_heig
     ImGui::PopStyleColor();
 }
 
+// The monospace font main.cpp loads second, or nullptr if it couldn't be loaded.
+static ImFont* mono_font()
+{
+    ImFontAtlas* atlas = ImGui::GetIO().Fonts;
+    return atlas->Fonts.Size > 1 ? atlas->Fonts[1] : nullptr;
+}
+
 static void render_diff(const std::string& diff)
 {
     ImGui::BeginChild("##diffview", ImGui::GetContentRegionAvail(), false,
         ImGuiWindowFlags_HorizontalScrollbar);
+    ImGui::PushFont(mono_font(), 0.0f);
 
     if (diff.empty())
     {
         ImGui::TextDisabled("(no diff output)");
+        ImGui::PopFont();
         ImGui::EndChild();
         return;
     }
@@ -1016,6 +1034,7 @@ static void render_diff(const std::string& diff)
         line_start = line_end < text_end ? line_end + 1 : text_end;
     }
 
+    ImGui::PopFont();
     ImGui::EndChild();
 }
 
@@ -1029,7 +1048,7 @@ static void render_centered_hint(const char* text, float y)
 static void render_empty_state(AppState& state, ImVec2 available)
 {
     float button_height = ImGui::GetFrameHeight();
-    ImGui::SetCursorPos(ImVec2((available.x - EMPTY_STATE_BUTTON_WIDTH) * 0.5f,
+    ImGui::SetCursorPos(ImVec2((available.x - scaled(EMPTY_STATE_BUTTON_WIDTH)) * 0.5f,
         (available.y - button_height * 2) * 0.5f));
     if (ImGui::Button("Open repository...", ImVec2(EMPTY_STATE_BUTTON_WIDTH, 0)))
     {
@@ -1063,7 +1082,7 @@ static void render_right_content(AppState& state)
     {
         float line_height = ImGui::GetTextLineHeightWithSpacing();
         ImGui::SetCursorPos(ImVec2(STATUS_MESSAGE_MARGIN_X,
-            available.y - line_height - STATUS_MESSAGE_MARGIN_BOTTOM));
+            available.y - line_height - scaled(STATUS_MESSAGE_MARGIN_BOTTOM)));
         ImGui::TextColored(COLOR_ERROR_TEXT, "%s", state.status_message.c_str());
     }
 }
@@ -1082,7 +1101,8 @@ static void render_splitter(AppState& state, float height)
     float delta = ImGui::GetIO().MouseDelta.x;
     if (is_active && delta != 0.0f)
     {
-        state.left_column_width = std::clamp(state.left_column_width + delta,
+        // Stored unscaled so the layout is the same on every monitor
+        state.left_column_width = std::clamp(state.left_column_width + delta / ui_scale,
             MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH);
     }
     if (ImGui::IsItemDeactivated())
@@ -1103,7 +1123,7 @@ static void render_splitter(AppState& state, float height)
     {
         color_id = ImGuiCol_SeparatorHovered;
     }
-    ImVec2 bottom_right = ImVec2(top_left.x + SPLITTER_WIDTH, top_left.y + height);
+    ImVec2 bottom_right = ImVec2(top_left.x + scaled(SPLITTER_WIDTH), top_left.y + height);
     ImGui::GetWindowDrawList()->AddRectFilled(top_left, bottom_right,
         ImGui::GetColorU32(color_id));
 }
@@ -1112,6 +1132,7 @@ static void render_splitter(AppState& state, float height)
 
 void gui_render(AppState& state)
 {
+    ui_scale = ImGui::GetStyle().FontScaleDpi;
     if (is_first_frame)
     {
         LOG_INFO("gui_render: first frame, display=%.0fx%.0f",
@@ -1131,9 +1152,9 @@ void gui_render(AppState& state)
     float menu_height = ImGui::GetFrameHeight();
     float total_width = io.DisplaySize.x;
     float total_height = io.DisplaySize.y - menu_height;
-    float content_height = total_height - HEADER_HEIGHT;
-    float left_width = state.left_column_width;
-    float right_width = total_width - left_width - SPLITTER_WIDTH;
+    float content_height = total_height - scaled(HEADER_HEIGHT);
+    float left_width = scaled(state.left_column_width);
+    float right_width = total_width - left_width - scaled(SPLITTER_WIDTH);
 
     ImGui::SetNextWindowPos(ImVec2(0, menu_height));
     ImGui::SetNextWindowSize(ImVec2(total_width, total_height));
@@ -1144,7 +1165,7 @@ void gui_render(AppState& state)
     ImGui::PopStyleVar(3);
 
     render_header_bar(state);
-    ImGui::SetCursorPos(ImVec2(0, HEADER_HEIGHT));
+    ImGui::SetCursorPos(ImVec2(0, scaled(HEADER_HEIGHT)));
 
     ImGui::BeginChild("##leftcolumn", ImVec2(left_width, content_height), false,
         ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
